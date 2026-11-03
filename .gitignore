@@ -1,0 +1,71 @@
+# Environment and credentials
+.env
+.env.*
+!.env.example
+*.env
+
+# PostgreSQL Database Data Directories & Local DBs
+pgdata/
+postgres_data/
+*.dump
+*.sql.gz
+*.db
+*.sqlite3
+
+# Local uploads, customer delivery proofs & camera evidence
+backend/app/data/uploads/
+uploads/
+*.jpg
+*.jpeg
+*.png.proof
+*delivery_proof*
+
+# Android Keystores & Signing Keys
+*.keystore
+*.jks
+*.p12
+*.key
+*.pem
+
+# Dependencies
+node_modules/
+frontend/node_modules/
+backend/venv/
+venv/
+.venv/
+env/
+
+# Next.js Build Outputs & Caches
+frontend/.next/
+frontend/out/
+.next/
+out/
+
+# Android Build Outputs & Caches
+frontend/android/.gradle/
+frontend/android/build/
+frontend/android/app/build/
+frontend/android/local.properties
+frontend/android/.idea/
+frontend/android/*.iml
+frontend/android/app/*.iml
+*.apk
+*.aab
+
+# Python Caches & Testing
+__pycache__/
+backend/**/__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+.coverage
+htmlcov/
+*.log
+
+# IDE & OS Files
+.vscode/
+.idea/
+*.swp
+*.swo
+.DS_Store
+Thumbs.db

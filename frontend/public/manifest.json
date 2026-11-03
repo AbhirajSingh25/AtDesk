@@ -1,0 +1,37 @@
+{
+  "name": "AtDesk — A product of The Sorted Club",
+  "short_name": "AtDesk",
+  "description": "Good things, delivered to your desk. Office food and essentials ordering at JMD Megapolis, Gurugram.",
+  "start_url": "/",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#F7F4EC",
+  "theme_color": "#103D32",
+  "categories": ["food", "productivity", "shopping"],
+  "icons": [
+    {
+      "src": "/icons/icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any maskable"
+    },
+    {
+      "src": "/icons/icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any maskable"
+    }
+  ],
+  "shortcuts": [
+    {
+      "name": "Track Order",
+      "url": "/#orders",
+      "description": "Track current desk delivery"
+    },
+    {
+      "name": "Nearby Shops",
+      "url": "/#shops",
+      "description": "Browse campus retail menus"
+    }
+  ]
+}
