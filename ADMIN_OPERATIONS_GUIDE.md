@@ -46,3 +46,4 @@ The system surfaces operations exceptions requiring human intervention:
 - Review fulfilled child orders per shop.
 - Generate settlement vouchers with gross food payable, commission deduction, and net payable.
 - Record bank transfer UTR number and mark settlement `PAID`.
+

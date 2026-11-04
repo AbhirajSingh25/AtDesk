@@ -23,3 +23,4 @@ Pop-Location
 Write-Host "`nRunner APK Build complete!" -ForegroundColor Green
 Write-Host "Debug APK: frontend/android/app/build/outputs/apk/runner/debug/app-runner-debug.apk" -ForegroundColor Green
 Write-Host "Release AAB: frontend/android/app/build/outputs/bundle/runnerRelease/app-runner-release.aab" -ForegroundColor Green
+

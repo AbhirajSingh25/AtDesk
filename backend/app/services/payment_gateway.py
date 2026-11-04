@@ -13,15 +13,15 @@ logger = logging.getLogger("atdesk.payment_gateway")
 
 class RazorpayGatewayService:
     """
-    Production-grade Razorpay Gateway Integration in TEST MODE.
-    Supports:
+    Production-grade Razorpay Payment Gateway Service.
+    Enforces:
     1. Server-side order creation (amount in paise, currency INR).
-    2. HMAC SHA-256 signature verification for payments and webhooks.
-    3. Full and partial refund tracking with gateway refund IDs.
-    4. Safe test simulation fallback when dummy test keys are used without live internet.
-    5. Ledger reconciliation with AtDesk database records.
+    2. HMAC SHA-256 signature verification for client payment callbacks.
+    3. Mandatory cryptographic HMAC SHA-256 signature verification for webhooks.
+    4. Full and partial refund tracking with real gateway refund IDs.
+    5. Clean separation between test mode and live production environments.
     """
-    
+
     @staticmethod
     def get_client() -> razorpay.Client:
         """Returns initialized Razorpay client using configured credentials"""
@@ -43,64 +43,53 @@ class RazorpayGatewayService:
                 "parent_brand": "The Sorted Club",
                 "location": "JMD Megapolis, Gurugram"
             },
-            "payment_capture": 1  # Auto capture payment upon authorization
+            "payment_capture": 1
         }
 
-        # If demo/mock test credentials are used, return deterministic test order immediately
-        if settings.RAZORPAY_KEY_ID.startswith("rzp_test_AtDesk"):
-            timestamp_ms = int(datetime.now(timezone.utc).timestamp() * 1000)
-            mock_order_id = f"order_rzp_test_{timestamp_ms}_{receipt.replace('-', '_')}"
-            return {
-                "gateway_order_id": mock_order_id,
-                "amount": amount_inr,
-                "amount_paise": amount_paise,
-                "currency": "INR",
-                "receipt": receipt,
-                "status": "created",
-                "key_id": settings.RAZORPAY_KEY_ID
-            }
+        is_prod = settings.ENVIRONMENT.lower() in ["production", "prod"]
 
-        if settings.RAZORPAY_KEY_ID.startswith("rzp_test_AtDesk"):
-            timestamp_ms = int(datetime.now(timezone.utc).timestamp() * 1000)
-            mock_refund_id = f"rfnd_rzp_test_{timestamp_ms}_{payment_id[-8:]}"
-            return {
-                "success": True,
-                "gateway_refund_id": mock_refund_id,
-                "payment_id": payment_id,
-                "amount": amount_inr if amount_inr is not None else Decimal("0.00"),
-                "status": "PROCESSED"
-            }
+        # If live/production credentials or non-mock test key, call Razorpay API
+        if not settings.RAZORPAY_KEY_ID.startswith("rzp_test_AtDeskDemo"):
+            try:
+                client = RazorpayGatewayService.get_client()
+                order = client.order.create(data=data)
+                logger.info(f"[Razorpay] Successfully created server-side order {order['id']} for ₹{amount_inr}")
+                return {
+                    "gateway_order_id": order["id"],
+                    "amount": amount_inr,
+                    "amount_paise": amount_paise,
+                    "currency": "INR",
+                    "receipt": receipt,
+                    "status": order.get("status", "created"),
+                    "key_id": settings.RAZORPAY_KEY_ID
+                }
+            except Exception as e:
+                logger.error(f"[Razorpay API Error] Order creation failed: {e}")
+                if is_prod:
+                    raise RuntimeError(f"Razorpay order creation failed: {e}")
+                # In non-production testing, fallback to test mode order
+                logger.warning(f"Falling back to test mode order for offline dev: {e}")
 
-        try:
-            client = RazorpayGatewayService.get_client()
-            order = client.order.create(data=data)
-            return {
-                "gateway_order_id": order["id"],
-                "amount": amount_inr,
-                "amount_paise": amount_paise,
-                "currency": "INR",
-                "receipt": receipt,
-                "status": order.get("status", "created"),
-                "key_id": settings.RAZORPAY_KEY_ID
-            }
-        except Exception as e:
-            logger.warning(f"Razorpay API call returned error ({e}). Using deterministic test mode order.")
-            timestamp_ms = int(datetime.now(timezone.utc).timestamp() * 1000)
-            mock_order_id = f"order_rzp_test_{timestamp_ms}_{receipt.replace('-', '_')}"
-            return {
-                "gateway_order_id": mock_order_id,
-                "amount": amount_inr,
-                "amount_paise": amount_paise,
-                "currency": "INR",
-                "receipt": receipt,
-                "status": "created",
-                "key_id": settings.RAZORPAY_KEY_ID
-            }
+        # Deterministic test mode order strictly for local dev/testing
+        if is_prod:
+            raise RuntimeError("Production environment requires real Razorpay credentials, not mock demo keys.")
+
+        timestamp_ms = int(datetime.now(timezone.utc).timestamp() * 1000)
+        mock_order_id = f"order_rzp_test_{timestamp_ms}_{receipt.replace('-', '_')}"
+        return {
+            "gateway_order_id": mock_order_id,
+            "amount": amount_inr,
+            "amount_paise": amount_paise,
+            "currency": "INR",
+            "receipt": receipt,
+            "status": "created",
+            "key_id": settings.RAZORPAY_KEY_ID
+        }
 
     @staticmethod
     def verify_payment_signature(razorpay_order_id: str, razorpay_payment_id: str, razorpay_signature: str) -> bool:
         """
-        Cryptographic verification of Razorpay payment signature:
+        Cryptographic verification of Razorpay client payment signature:
         HMAC SHA-256 of `order_id + "|" + payment_id` with `RAZORPAY_KEY_SECRET`.
         """
         if not razorpay_order_id or not razorpay_payment_id or not razorpay_signature:
@@ -127,9 +116,9 @@ class RazorpayGatewayService:
     @staticmethod
     def verify_webhook_signature(body_bytes: bytes, received_signature: str) -> bool:
         """
-        Validates HMAC SHA-256 signature on raw webhook payload.
+        Validates mandatory HMAC SHA-256 signature on raw webhook payload using RAZORPAY_WEBHOOK_SECRET.
         """
-        if not received_signature:
+        if not received_signature or not settings.RAZORPAY_WEBHOOK_SECRET:
             return False
         
         secret = settings.RAZORPAY_WEBHOOK_SECRET.encode("utf-8")
@@ -154,7 +143,7 @@ class RazorpayGatewayService:
         notes: Optional[Dict[str, str]] = None
     ) -> Dict[str, Any]:
         """
-        Initiates a full or partial refund via Razorpay test gateway.
+        Initiates a full or partial refund via Razorpay.
         If amount is None, a full refund is processed.
         Tracks status: PROCESSED | PENDING | FAILED.
         """
@@ -164,35 +153,47 @@ class RazorpayGatewayService:
         if amount_inr is not None:
             data["amount"] = int(amount_inr * 100)  # in paise
 
-        if settings.RAZORPAY_KEY_ID.startswith("rzp_test_AtDesk"):
-            timestamp_ms = int(datetime.now(timezone.utc).timestamp() * 1000)
-            mock_refund_id = f"rfnd_rzp_test_{timestamp_ms}_{payment_id[-8:]}"
+        is_prod = settings.ENVIRONMENT.lower() in ["production", "prod"]
+
+        if not settings.RAZORPAY_KEY_ID.startswith("rzp_test_AtDeskDemo"):
+            try:
+                client = RazorpayGatewayService.get_client()
+                refund = client.payment.refund(payment_id, data)
+                logger.info(f"[Razorpay Refund] Success for payment {payment_id}. Refund ID: {refund['id']}")
+                return {
+                    "success": True,
+                    "gateway_refund_id": refund["id"],
+                    "payment_id": payment_id,
+                    "amount": Decimal(str(refund["amount"] / 100.0)),
+                    "status": refund.get("status", "processed").upper()
+                }
+            except Exception as e:
+                logger.error(f"[Razorpay Refund Error] Payment {payment_id} refund failed: {e}")
+                if is_prod:
+                    return {
+                        "success": False,
+                        "error": str(e),
+                        "gateway_refund_id": "",
+                        "payment_id": payment_id,
+                        "amount": amount_inr if amount_inr is not None else Decimal("0.00"),
+                        "status": "FAILED"
+                    }
+
+        if is_prod:
             return {
-                "success": True,
-                "gateway_refund_id": mock_refund_id,
-                "payment_id": payment_id,
-                "amount": amount_inr if amount_inr is not None else Decimal("0.00"),
-                "status": "PROCESSED"
+                "success": False,
+                "error": "Production mode requires real Razorpay credentials for refunds.",
+                "status": "FAILED",
+                "payment_id": payment_id
             }
 
-        try:
-            client = RazorpayGatewayService.get_client()
-            refund = client.payment.refund(payment_id, data)
-            return {
-                "success": True,
-                "gateway_refund_id": refund["id"],
-                "payment_id": payment_id,
-                "amount": Decimal(str(refund["amount"] / 100.0)),
-                "status": refund.get("status", "processed").upper()
-            }
-        except Exception as e:
-            logger.warning(f"Razorpay refund call ({e}). Returning tracked test-mode refund record.")
-            timestamp_ms = int(datetime.now(timezone.utc).timestamp() * 1000)
-            mock_refund_id = f"rfnd_rzp_test_{timestamp_ms}_{payment_id[-8:]}"
-            return {
-                "success": True,
-                "gateway_refund_id": mock_refund_id,
-                "payment_id": payment_id,
-                "amount": amount_inr if amount_inr is not None else Decimal("0.00"),
-                "status": "PROCESSED"
-            }
+        # Staging test mode refund simulation strictly for automated tests
+        timestamp_ms = int(datetime.now(timezone.utc).timestamp() * 1000)
+        mock_refund_id = f"rfnd_rzp_test_{timestamp_ms}_{payment_id[-8:]}"
+        return {
+            "success": True,
+            "gateway_refund_id": mock_refund_id,
+            "payment_id": payment_id,
+            "amount": amount_inr if amount_inr is not None else Decimal("0.00"),
+            "status": "PROCESSED"
+        }

@@ -24,3 +24,4 @@ Pop-Location
 Write-Host "`nFrontend build & static export passed successfully!" -ForegroundColor Green
 
 Write-Host "`nAll AtDesk test suites and builds passed!" -ForegroundColor Cyan
+

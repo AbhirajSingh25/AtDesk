@@ -1,4 +1,20 @@
-const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000/api";
+function getResolvedApiBase(): string {
+  const envUrl = process.env.NEXT_PUBLIC_API_URL?.trim();
+  if (process.env.NODE_ENV === "production" && !envUrl) {
+    // In production, fallback to production API domain instead of localhost
+    return "https://api.atdesk.thesortedclub.com/api";
+  }
+  let base = envUrl || "http://localhost:8000/api";
+  // Strip trailing slashes
+  base = base.replace(/\/+$/, "");
+  // Ensure base ends with /api
+  if (!base.endsWith("/api")) {
+    base = `${base}/api`;
+  }
+  return base;
+}
+
+const API_BASE_URL = getResolvedApiBase();
 
 export function getAuthToken(): string | null {
   if (typeof window === "undefined") return null;
@@ -15,7 +31,8 @@ export function setAuthToken(token: string | null) {
 }
 
 export async function fetchApi<T>(endpoint: string, options?: RequestInit): Promise<T> {
-  const url = `${API_BASE_URL}${endpoint.startsWith("/") ? endpoint : `/${endpoint}`}`;
+  const cleanEndpoint = endpoint.replace(/^\/+/, "");
+  const url = `${API_BASE_URL}/${cleanEndpoint}`;
   const token = getAuthToken();
 
   const headers: Record<string, string> = {
@@ -47,4 +64,3 @@ export async function fetchApi<T>(endpoint: string, options?: RequestInit): Prom
     throw err;
   }
 }
-

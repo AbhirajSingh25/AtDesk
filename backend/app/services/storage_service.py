@@ -22,25 +22,33 @@ ALLOWED_MIME_TYPES = {
 
 class StorageService:
     """
-    AWS S3 Private Object Storage Adapter for Delivery Proof Photographs.
+    AWS S3 & Cloudflare R2 Private Object Storage Adapter for Delivery Proof Photographs.
     Enforces:
     - Pre-signed POST/PUT upload URLs (short-lived, 15 min).
     - File size limits (max 5 MB).
     - MIME-type enforcement (JPEG, PNG, WebP only).
     - Pre-signed GET download URLs (never long-lived public URLs).
     - Audit logging of photo accesses.
-    - Secure tokenized staging fallback when AWS credentials are not live.
+    - Cloudflare R2 endpoint_url compatibility.
     """
 
     @classmethod
     def _get_s3_client(cls):
-        return boto3.client(
-            "s3",
-            region_name=settings.AWS_REGION,
-            aws_access_key_id=settings.AWS_ACCESS_KEY_ID,
-            aws_secret_access_key=settings.AWS_SECRET_ACCESS_KEY,
-            config=Config(signature_version="s3v4")
-        )
+        access_key = settings.AWS_ACCESS_KEY_ID
+        secret_key = settings.AWS_SECRET_ACCESS_KEY
+        endpoint_url = settings.S3_ENDPOINT_URL
+        region = settings.AWS_REGION or "auto"
+
+        kwargs = {
+            "region_name": region,
+            "aws_access_key_id": access_key,
+            "aws_secret_access_key": secret_key,
+            "config": Config(signature_version="s3v4")
+        }
+        if endpoint_url:
+            kwargs["endpoint_url"] = endpoint_url
+
+        return boto3.client("s3", **kwargs)
 
     @classmethod
     def generate_presigned_upload_url(
@@ -62,8 +70,9 @@ class StorageService:
         unique_file_id = f"proof_{master_order_id}_{now.strftime('%Y%m%d%H%M%S')}_{uuid.uuid4().hex[:8]}{ext}"
         s3_key = f"delivery-evidence/{now.strftime('%Y/%m/%d')}/{unique_file_id}"
 
+        is_prod = settings.ENVIRONMENT.lower() in ["production", "prod"]
+
         try:
-            # Check if live AWS credentials can generate a signed URL
             client = cls._get_s3_client()
             presigned_post = client.generate_presigned_post(
                 Bucket=settings.S3_BUCKET_NAME,
@@ -71,7 +80,7 @@ class StorageService:
                 Fields={"Content-Type": clean_mime},
                 Conditions=[
                     {"Content-Type": clean_mime},
-                    ["content-length-range", 100, settings.MAX_UPLOAD_SIZE_BYTES]  # Max 5MB
+                    ["content-length-range", 100, settings.MAX_UPLOAD_SIZE_BYTES]
                 ],
                 ExpiresIn=expires_in
             )
@@ -85,8 +94,11 @@ class StorageService:
                 "expires_in_seconds": expires_in
             }
         except Exception as e:
-            logger.info(f"Using Staging Secure Signed Storage Provider ({e})")
-            # Staging Secure URL with HMAC token
+            logger.warning(f"S3/R2 client generate_presigned_post error: {e}")
+            if is_prod:
+                raise RuntimeError(f"Private cloud storage is required in production: {e}")
+
+            # Non-production Staging Secure URL with HMAC token fallback
             token_payload = f"{s3_key}:{int(now.timestamp()) + expires_in}"
             token = hmac.new(settings.SECRET_KEY.encode(), token_payload.encode(), hashlib.sha256).hexdigest()
             upload_url = f"/api/storage/staging-upload?key={s3_key}&token={token}&expires={int(now.timestamp()) + expires_in}"
@@ -111,6 +123,8 @@ class StorageService:
         Prevents direct long-lived public access to customer office desks.
         """
         now = datetime.now(timezone.utc)
+        is_prod = settings.ENVIRONMENT.lower() in ["production", "prod"]
+
         try:
             client = cls._get_s3_client()
             url = client.generate_presigned_url(
@@ -120,7 +134,8 @@ class StorageService:
             )
             return url
         except Exception as e:
-            # Staging signed download token
+            if is_prod:
+                raise RuntimeError(f"Failed to generate pre-signed download URL from private cloud storage: {e}")
             expires_timestamp = int(now.timestamp()) + expires_in
             token_payload = f"GET:{s3_key}:{expires_timestamp}"
             token = hmac.new(settings.SECRET_KEY.encode(), token_payload.encode(), hashlib.sha256).hexdigest()
@@ -137,4 +152,3 @@ class StorageService:
         else:
             expected = hmac.new(settings.SECRET_KEY.encode(), f"{s3_key}:{expires_timestamp}".encode(), hashlib.sha256).hexdigest()
         return hmac.compare_digest(expected, token)
-

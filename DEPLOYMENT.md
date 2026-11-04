@@ -1,6 +1,6 @@
 # AtDesk Production Deployment Guide
 
-This document outlines the cloud deployment topology for AtDesk across managed infrastructure providers.
+This document outlines the cloud deployment topology for AtDesk across managed infrastructure providers with tested, verified commands.
 
 ---
 
@@ -25,28 +25,40 @@ This document outlines the cloud deployment topology for AtDesk across managed i
                                    ▼
                     [ Neon Serverless / AWS RDS ]
                       PostgreSQL 18 Managed DB
-                      • 28+ Entities with Foreign Keys
+                      • 34 Entities with Foreign Keys
                       • Strict Row-Level Locking (FOR UPDATE)
                                    │
                                    ▼
-                       [ Cloudflare R2 / S3 ]
-                       Delivery Proof Storage (Private)
+                       [ Cloudflare R2 / AWS S3 ]
+                       Delivery Proof Storage (Private Pre-signed URLs)
 ```
 
 ---
 
-## 2. Managed Database: Neon PostgreSQL
+## 2. Managed Database Provisioning & Migrations
 
+### A. Neon Serverless PostgreSQL Setup
 1. Sign in to [Neon Console](https://console.neon.tech).
 2. Create project `atdesk-production` in region `ap-southeast-1` (Singapore) or `eu-central-1` (or AWS RDS `ap-south-1` Mumbai).
 3. Copy the pooled connection string:
    ```
    postgresql+asyncpg://<user>:<password>@<endpoint>-pooler.neon.tech/atdesk?ssl=require
    ```
-4. Run Alembic migrations against the production database:
-   ```bash
-   DATABASE_URL="postgresql+asyncpg://..." alembic upgrade head
-   ```
+
+### B. Tested Migration Command for Render / CI Deployments
+To run migrations from the repository root:
+```bash
+# Set production database connection string
+export DATABASE_URL="postgresql+asyncpg://<user>:<password>@<endpoint>/atdesk?ssl=require"
+export PYTHONPATH="."
+
+# Execute versioned Alembic migration to HEAD (Creates all 34 tables)
+alembic upgrade head
+```
+Or with explicit config file:
+```bash
+alembic -c backend/alembic.ini upgrade head
+```
 
 ---
 
@@ -59,18 +71,28 @@ This document outlines the cloud deployment topology for AtDesk across managed i
    - **Name:** `atdesk-api`
    - **Region:** Singapore / Frankfurt
    - **Branch:** `rebuild/role-separation` (or `main`)
-   - **Root Directory:** Leave blank (or `backend`)
+   - **Root Directory:** Leave blank
    - **Runtime:** `Python 3`
-   - **Build Command:** `pip install -r backend/requirements.txt`
+   - **Build Command:** `pip install -r backend/requirements.txt && alembic upgrade head`
    - **Start Command:** `uvicorn backend.app.main:app --host 0.0.0.0 --port $PORT`
 5. Set Environment Variables in Render:
-   - `DATABASE_URL`: Your Neon/RDS asyncpg connection string.
-   - `SECRET_KEY`: Generate via `python -c "import secrets; print(secrets.token_hex(32))"`.
-   - `ALLOWED_ORIGINS`: `https://atdesk.thesortedclub.com,https://admin.atdesk.thesortedclub.com`.
+   - `ENVIRONMENT`: `production`
+   - `DATABASE_URL`: `postgresql+asyncpg://<user>:<password>@<host>/<database>?ssl=require`
+   - `SECRET_KEY`: High-entropy string (>= 32 characters, generated via `python -c "import secrets; print(secrets.token_hex(32))"`)
+   - `ALLOWED_ORIGINS`: `https://atdesk.thesortedclub.com,https://admin.atdesk.thesortedclub.com,https://runner.atdesk.thesortedclub.com,https://shop.atdesk.thesortedclub.com`
    - `RAZORPAY_KEY_ID`: `rzp_live_*`
-   - `RAZORPAY_KEY_SECRET`: Your Razorpay Secret.
-   - `DLT_OTP_TEMPLATE_ID`: Your DLT registered template ID.
-   - `SMS_GATEWAY_API_KEY`: Gupshup/MSG91 API Key.
+   - `RAZORPAY_KEY_SECRET`: Your Razorpay Secret
+   - `RAZORPAY_WEBHOOK_SECRET`: Your Webhook Secret
+   - `SMS_PROVIDER`: `GUPSHUP` or `MSG91`
+   - `SMS_API_KEY`: Your SMS provider API auth key
+   - `SMS_SENDER_ID`: `SORTED`
+   - `SMS_DLT_PE_ID`: Registered 19-digit Principal Entity ID
+   - `SMS_DLT_TEMPLATE_ID`: Registered OTP template ID
+   - `STORAGE_BACKEND`: `S3_PRIVATE` or `CLOUDFLARE_R2`
+   - `S3_BUCKET_NAME`: `atdesk-delivery-proofs-private`
+   - `AWS_ACCESS_KEY_ID`: S3/R2 Access Key
+   - `AWS_SECRET_ACCESS_KEY`: S3/R2 Secret Key
+   - `S3_ENDPOINT_URL`: Optional (for Cloudflare R2: `https://<account_id>.r2.cloudflarestorage.com`)
 
 ---
 
@@ -83,9 +105,10 @@ This document outlines the cloud deployment topology for AtDesk across managed i
    - **Framework Preset:** Next.js
    - **Root Directory:** `frontend`
    - **Build Command:** `next build`
-   - **Output Directory:** `out` (or default Next.js output)
+   - **Output Directory:** `out`
 5. Environment Variables:
-   - `NEXT_PUBLIC_API_URL`: `https://atdesk-api.onrender.com` (your deployed FastAPI backend URL).
+   - `NEXT_PUBLIC_API_URL`: `https://api.atdesk.thesortedclub.com/api` (or your deployed Render URL `https://atdesk-api.onrender.com/api`).
+   - `NEXT_PUBLIC_RAZORPAY_KEY_ID`: `rzp_live_*` (or test key)
 6. Click **Deploy**.
 
 ---
@@ -96,4 +119,6 @@ This document outlines the cloud deployment topology for AtDesk across managed i
 | :--- | :--- | :--- | :--- |
 | `CNAME` | `atdesk` | `cname.vercel-dns.com` | Proxied |
 | `CNAME` | `admin.atdesk` | `cname.vercel-dns.com` | Proxied |
-| `CNAME` | `api.atdesk` | `atdesk-api.onrender.com` | Proxied (or DNS only) |
+| `CNAME` | `runner.atdesk` | `cname.vercel-dns.com` | Proxied |
+| `CNAME` | `shop.atdesk` | `cname.vercel-dns.com` | Proxied |
+| `CNAME` | `api.atdesk` | `atdesk-api.onrender.com` | Proxied / DNS only |

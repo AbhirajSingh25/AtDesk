@@ -1,4 +1,4 @@
-# Razorpay Payment Gateway Integration Guide
+# Razorpay Payment Gateway & Webhook Guide
 
 AtDesk integrates with **Razorpay Standard Checkout** to accept UPI (Google Pay, PhonePe, Paytm, CRED), Net Banking, and Credit/Debit cards.
 
@@ -11,13 +11,40 @@ AtDesk integrates with **Razorpay Standard Checkout** to accept UPI (Google Pay,
 3. Generate API Keys:
    - Navigate to **Settings** -> **API Keys**.
    - Generate Key for **Test Mode** (during staging) or **Live Mode** (production).
-   - Copy `Key Id` (`rzp_live_*` or `rzp_test_*`) and `Key Secret`.
+   - Set environment variables:
+     - `RAZORPAY_KEY_ID`: `rzp_live_*` (or `rzp_test_*`)
+     - `RAZORPAY_KEY_SECRET`: Secret key
 
 ---
 
-## 2. Server-Side Payment Flow
+## 2. Mandatory Webhook Verification & Configuration
 
-AtDesk uses a strict server-authoritative payment lifecycle:
+To guarantee orders are confirmed even if a customer's phone loses connectivity right after payment:
+
+1. Navigate to **Razorpay Dashboard** -> **Settings** -> **Webhooks**.
+2. Click **Add New Webhook**.
+3. **Canonical Webhook URL:**
+   ```
+   https://api.atdesk.thesortedclub.com/api/payments/razorpay/webhook
+   ```
+   *(Note: `/api/payments/webhook` is also routed identically for backwards compatibility).*
+4. **Secret:** Set a random 32-character string and configure it as `RAZORPAY_WEBHOOK_SECRET` in your backend environment variables.
+5. **Alert Email:** Enter your operations email (e.g. `ops@thesortedclub.com`).
+6. **Active Events:**
+   - `order.paid`
+   - `payment.captured`
+   - `payment.failed`
+   - `refund.processed`
+
+### Webhook Security Enforcements:
+- **Mandatory Header:** The backend requires `X-Razorpay-Signature`. Requests with missing or invalid signatures are immediately rejected with **HTTP 400 Bad Request**.
+- **HMAC SHA-256 Validation:** Verifies raw payload bytes against `RAZORPAY_WEBHOOK_SECRET`.
+- **Currency & Amount Check:** Confirms `currency == "INR"` and matches payload amount (paise to INR) against the database payment record.
+- **Idempotency:** Duplicate events for the same `gateway_payment_id` are acknowledged with `status: ok` without duplicate side-effects.
+
+---
+
+## 3. Server-Authoritative Order & Refund Lifecycle
 
 ```
 [Employee App]          [AtDesk FastAPI]               [Razorpay Gateway]
@@ -37,37 +64,23 @@ AtDesk uses a strict server-authoritative payment lifecycle:
       │                         │   -> Marks Order `PAID`      │
       │                         │   -> Dispatches to Shops     │
       │<── 7. Order Confirmed ──│                              │
+      │                                                        │
+      │                                [Razorpay Webhook Event]│
+      │                         │<─── order.paid / captured ───│
+      │                         │─── 8. Mandatory HMAC check ──│
+      │                         │─── 9. Idempotent DB update ──│
 ```
-
----
-
-## 3. Webhook Configuration (Fail-safe Idempotence)
-
-To guarantee order status is updated even if a customer's phone loses connectivity right after payment:
-
-1. Navigate to **Razorpay Dashboard** -> **Settings** -> **Webhooks**.
-2. Click **Add New Webhook**.
-3. **Webhook URL:** `https://api.atdesk.thesortedclub.com/api/orders/webhook/razorpay`
-4. **Secret:** Generate a random 32-character string and set as `RAZORPAY_WEBHOOK_SECRET` in backend environment variables.
-5. **Active Events:**
-   - `order.paid`
-   - `payment.captured`
-   - `payment.failed`
-   - `refund.processed`
-
-The webhook handler verifies `X-Razorpay-Signature` using `RAZORPAY_WEBHOOK_SECRET` before processing status transitions.
 
 ---
 
 ## 4. Refund Engine
 
-When an order is cancelled within the 2-minute grace window or rejected by shops:
-- The backend issues a refund via Razorpay Refunds API:
+When an order is cancelled within the 2-minute grace window or rejected by a shop:
+- The backend initiates a refund via Razorpay Refunds API:
   ```python
   client.payment.refund(payment_id, {
       "amount": int(total_amount * 100),
-      "speed": "optimum",
-      "notes": {"reason": "Customer cancelled within 2-min grace window"}
+      "notes": {"reason": "Customer cancelled within 2-min window"}
   })
   ```
-- An audit log and refund ledger entry are created in the database.
+- If the payment provider fails or returns an error in production, the backend logs the error and returns `status: FAILED` instead of silently fabricating refund success.

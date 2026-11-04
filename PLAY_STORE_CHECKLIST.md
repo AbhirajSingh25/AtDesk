@@ -54,3 +54,4 @@ This document details all requirements and assets necessary for publishing AtDes
 - [ ] Privacy Policy URL (`https://atdesk.thesortedclub.com/privacy`).
 - [ ] Terms of Service URL (`https://atdesk.thesortedclub.com/terms`).
 - [ ] Support Email (`support@thesortedclub.com`).
+

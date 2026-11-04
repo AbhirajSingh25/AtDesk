@@ -69,3 +69,4 @@ Both flavors compiled with zero errors:
 | **Runner Debug** | `runner` | `com.thesortedclub.atdesk.runner` | APK | 10.46 MB | `frontend/android/app/build/outputs/apk/runner/debug/app-runner-debug.apk` |
 | **Employee Release** | `employee` | `com.thesortedclub.atdesk` | AAB | 7.51 MB | `frontend/android/app/build/outputs/bundle/employeeRelease/app-employee-release.aab` |
 | **Runner Release** | `runner` | `com.thesortedclub.atdesk.runner` | AAB | 7.51 MB | `frontend/android/app/build/outputs/bundle/runnerRelease/app-runner-release.aab` |
+

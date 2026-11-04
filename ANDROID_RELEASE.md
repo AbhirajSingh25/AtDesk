@@ -70,3 +70,4 @@ adb install -r frontend/android/app/build/outputs/apk/runner/debug/app-runner-de
 ```
 
 Both apps can be installed side-by-side on the same physical phone because they have distinct application IDs (`com.thesortedclub.atdesk` and `com.thesortedclub.atdesk.runner`).
+

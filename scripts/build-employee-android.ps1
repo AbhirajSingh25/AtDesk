@@ -23,3 +23,4 @@ Pop-Location
 Write-Host "`nEmployee APK Build complete!" -ForegroundColor Green
 Write-Host "Debug APK: frontend/android/app/build/outputs/apk/employee/debug/app-employee-debug.apk" -ForegroundColor Green
 Write-Host "Release AAB: frontend/android/app/build/outputs/bundle/employeeRelease/app-employee-release.aab" -ForegroundColor Green
+

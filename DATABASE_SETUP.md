@@ -1,79 +1,57 @@
 # AtDesk Database Provisioning & Management Guide
 
-AtDesk utilizes **PostgreSQL** with an asynchronous SQLAlchemy 2.0 object-relational layer (`asyncpg`) and **strict row-level locking (`FOR UPDATE`)** to prevent race conditions during order placement, runner assignment, and prepaid balance deductions.
+AtDesk utilizes **PostgreSQL** with an asynchronous SQLAlchemy 2.0 object-relational layer (`asyncpg`), Alembic for versioned schema migrations, and **strict row-level locking (`FOR UPDATE`)** to prevent race conditions during order placement, runner assignment, and prepaid balance deductions.
 
 ---
 
-## 1. Managed PostgreSQL Options
+## 1. Managed PostgreSQL Providers
 
-For production hosting, we recommend:
-1. **Neon Serverless PostgreSQL:** Automatic scaling, connection pooling (PgBouncer built-in), zero cold-start latency.
-2. **AWS RDS PostgreSQL (ap-south-1 Mumbai):** Lowest network latency to Gurgaon/NCR users (~15ms).
-3. **Render Managed PostgreSQL:** Simple single-dashboard management if FastAPI is hosted on Render.
-
----
-
-## 2. Database Schema & Tables
-
-The database schema manages 28+ core tables:
-
-- **Authentication & Roles:** `users`, `user_roles`, `runner_profiles`, `shop_staff_profiles`, `otps`.
-- **Catalogue & Stores:** `shops`, `categories`, `menu_items`, `coupons`, `promo_banners`.
-- **Order Processing:** `master_orders`, `child_orders`, `order_items`, `order_status_history`.
-- **Settlement & Finance:** `daily_settlements`, `prepaid_accounts`, `prepaid_ledger_entries`, `refunds`.
-- **Runner Logistics:** `runner_locations`, `delivery_assignments`, `delivery_proofs`.
-- **Governance:** `audit_logs`, `supervisor_actions`.
+For production hosting:
+1. **Neon Serverless PostgreSQL:** Automatic scaling, built-in PgBouncer pooling, zero cold-start latency.
+2. **AWS RDS PostgreSQL (ap-south-1 Mumbai):** Lowest network latency to Gurgaon/NCR office campuses (~15ms).
+3. **Render Managed PostgreSQL:** Direct internal network communication if FastAPI is deployed on Render.
 
 ---
 
-## 3. Migration Procedure
+## 2. Tested Migration Commands
 
-Run migrations using Alembic:
+Alembic is configured at both repository root (`alembic.ini`) and `backend/alembic.ini`.
 
+### To Run Migrations Up to HEAD (Creates all 34 tables):
 ```bash
-# Set database URL
-export DATABASE_URL="postgresql+asyncpg://user:password@host:5432/atdesk?ssl=require"
+export DATABASE_URL="postgresql+asyncpg://<username>:<password>@<host>:5432/<database>?ssl=require"
+export PYTHONPATH="."
 
-# Check migration status
+alembic upgrade head
+```
+
+### To Check Current Migration Version:
+```bash
 alembic current
-
-# Run all migrations up to head
-alembic upgrade head
 ```
 
-To create a new migration after model updates:
+### To Inspect Migration History:
 ```bash
-alembic revision --autogenerate -m "Add new column or table description"
-alembic upgrade head
+alembic history --verbose
 ```
 
 ---
 
-## 4. Connection Pooling Configuration
+## 3. Database Schema Overview (34 Core Tables)
 
-In `backend/app/db/session.py`, connection pool settings are tuned for high concurrency:
+The versioned migration `8683b34160e6` provisions all production entities:
 
-```python
-engine = create_async_engine(
-    settings.DATABASE_URL,
-    pool_size=20,
-    max_overflow=10,
-    pool_recycle=300,
-    pool_pre_ping=True
-)
-```
+- **Users & Authentication:** `users`, `user_roles`, `employee_profiles`, `delivery_partners`, `shop_staff_profiles`, `delivery_otp_records`.
+- **Catalogue & Promotions:** `shops`, `menu_categories`, `menu_items`, `menu_versions`, `menu_price_audit_logs`, `coupons`, `promo_banners`.
+- **Order Orchestration:** `master_orders`, `vendor_orders`, `order_items`, `order_unit_economics`, `scheduled_orders`.
+- **Logistics & Delivery:** `delivery_assignments`, `delivery_events`, `delivery_location_events`, `delivery_proofs`, `eta_snapshots`.
+- **Financial Ledgers & Settlements:** `payments`, `payment_events`, `refunds`, `shop_settlements`, `settlement_items`, `shop_prepaid_accounts`, `shop_prepaid_ledger`.
+- **Governance:** `notifications`, `support_tickets`, `audit_logs`, `shop_operating_hours`.
 
 ---
 
-## 5. Automated Backups & Disaster Recovery
+## 4. Automated Clean Database Provisioning Verification
 
-1. **Daily Snapshots:** Enable automated daily snapshots with 30-day retention on your managed provider (Neon or AWS RDS).
-2. **Point-In-Time Recovery (PITR):** Neon and AWS RDS support continuous WAL archiving for point-in-time recovery up to 7 days.
-3. **Manual Backup Dump:**
-   ```bash
-   pg_dump -h host -U user -d atdesk -F c -b -v -f atdesk_backup_$(date +%Y%m%d).dump
-   ```
-4. **Restore:**
-   ```bash
-   pg_restore -h host -U user -d atdesk -v atdesk_backup_YYYYMMDD.dump
-   ```
+We executed a full verification script (`scripts/test_clean_db_migration.py`) that provisions a pristine database, runs `alembic upgrade head`, verifies table counts, and cleans up:
+- Total tables created: **34**
+- Return code: **0** (All DDL statements executed without warnings)
