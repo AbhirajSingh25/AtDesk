@@ -61,6 +61,8 @@ backend/**/__pycache__/
 .coverage
 htmlcov/
 *.log
+pg_log.txt
+
 
 # IDE & OS Files
 .vscode/
