@@ -68,3 +68,4 @@ The rebuild will be executed in sequential, committed phases:
 - **Phase 5**: Runner App overhaul: Runner authentication, live job assignment, shop pickup checklist, strict camera-only proof (blocking on denial), GPS location verification, customer OTP verification.
 - **Phase 6**: Shop Order Inbox & Operations Admin: Lightweight responsive vendor inbox web app; Admin operations console with mobile bottom navigation, catalogue CRUD, bulk CSV upload, promo manager, exception queue, masked OTP with supervisor reveal.
 - **Phase 7**: Dual Android APK packaging (`com.thesortedclub.atdesk` and `com.thesortedclub.atdesk.runner`), comprehensive test suite execution, frontend build & typecheck.
+

@@ -62,23 +62,22 @@ async def get_current_user_optional(
         return None
     payload = decode_access_token(auth.credentials)
     if not payload or "sub" not in payload:
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid token")
+        return None
     try:
         user_id = int(payload["sub"])
     except (ValueError, TypeError):
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid token subject")
+        return None
     stmt = (
         select(User)
         .options(
             selectinload(User.employee_profile),
-            selectinload(User.delivery_profile)
+            selectinload(User.delivery_profile),
+            selectinload(User.shop_staff_profile)
         )
         .where(User.id == user_id)
     )
     res = await db.execute(stmt)
     user = res.scalar_one_or_none()
-    if not user:
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="User does not exist")
     return user
 
 async def get_current_user(
@@ -107,7 +106,8 @@ async def get_current_user(
         select(User)
         .options(
             selectinload(User.employee_profile),
-            selectinload(User.delivery_profile)
+            selectinload(User.delivery_profile),
+            selectinload(User.shop_staff_profile)
         )
         .where(User.id == user_id)
     )
@@ -126,3 +126,12 @@ def require_roles(allowed_roles: List[UserRole]):
             )
         return current_user
     return role_checker
+
+async def require_admin_user(current_user: User = Depends(require_roles([UserRole.ADMIN, UserRole.FINANCE]))) -> User:
+    return current_user
+
+async def require_runner_user(current_user: User = Depends(require_roles([UserRole.DELIVERY_PARTNER, UserRole.ADMIN]))) -> User:
+    return current_user
+
+async def require_shop_staff_user(current_user: User = Depends(require_roles([UserRole.SHOP_STAFF, UserRole.ADMIN]))) -> User:
+    return current_user

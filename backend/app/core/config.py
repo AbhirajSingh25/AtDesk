@@ -2,21 +2,24 @@ import os
 from typing import List, Optional
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+DEFAULT_DEV_SECRET = "atdesk-the-sorted-club-secure-token-2026-jmd-megapolis"
+
 class Settings(BaseSettings):
     PROJECT_NAME: str = "AtDesk"
     VERSION: str = "2.0.0-staging"
     TAGLINE: str = "Good things, delivered to your desk."
     PARENT_BRAND: str = "The Sorted Club"
     LAUNCH_LOCATION: str = "JMD Megapolis, Sector 48, Gurugram, Haryana, India"
+    ENVIRONMENT: str = os.getenv("ENVIRONMENT", "staging")  # development | staging | production
     
-    # 1. Managed PostgreSQL Staging Database
+    # 1. Managed PostgreSQL Database
     DATABASE_URL: str = os.getenv(
         "DATABASE_URL", 
         "postgresql+asyncpg://postgres:atdesk_staging@127.0.0.1:5433/atdesk_staging"
     )
     
     # 2. Security & JWT
-    SECRET_KEY: str = os.getenv("SECRET_KEY", "atdesk-the-sorted-club-secure-token-2026-jmd-megapolis")
+    SECRET_KEY: str = os.getenv("SECRET_KEY", DEFAULT_DEV_SECRET)
     ALGORITHM: str = "HS256"
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 60 * 24 * 7  # 7 days
     
@@ -24,6 +27,7 @@ class Settings(BaseSettings):
     FLAT_DELIVERY_FEE: float = 25.00  # Exactly one flat delivery fee across all shops
     CANCELLATION_WINDOW_SECONDS: int = 120  # Strict 2-minute server-authoritative window
     MIN_SHOP_PREPAID_ALERT_THRESHOLD: float = 1500.00
+    SHOP_ACCEPTANCE_TIMEOUT_SECONDS: int = 180  # 3 minutes for shop to accept order before alert
     
     # 4. Indian DLT SMS Configuration
     SMS_PROVIDER: str = os.getenv("SMS_PROVIDER", "GUPSHUP")  # GUPSHUP | EXOTEL | STAGING_ADAPTER
@@ -62,14 +66,37 @@ class Settings(BaseSettings):
     JMD_TOWERS: List[str] = ["Tower A", "Tower B", "Tower C", "Tower D"]
     JMD_FLOORS: List[int] = list(range(1, 15))
     
-    # CORS
+    # 10. CORS Approved Origins
     CORS_ORIGINS: List[str] = [
         "http://localhost:3000",
         "http://127.0.0.1:3000",
         "http://localhost:8000",
         "http://127.0.0.1:8000",
+        "capacitor://localhost",
+        "http://localhost",
+        "https://localhost",
+        "https://atdesk.thesortedclub.com",
+        "https://admin.atdesk.thesortedclub.com",
+        "https://runner.atdesk.thesortedclub.com",
+        "https://shop.atdesk.thesortedclub.com",
     ]
 
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
+
+    def validate_production_secrets(self):
+        """
+        Enforce fail-fast security constraint in production:
+        Production MUST fail startup if required secrets are absent or predictable.
+        """
+        if self.ENVIRONMENT.lower() in ["production", "prod"]:
+            if not self.SECRET_KEY or self.SECRET_KEY == DEFAULT_DEV_SECRET:
+                raise RuntimeError(
+                    "FATAL SECURITY FAILURE: Production deployment detected with absent or default predictable SECRET_KEY! "
+                    "You must provide a high-entropy SECRET_KEY via environment variable."
+                )
+            if len(self.SECRET_KEY) < 32:
+                raise RuntimeError("FATAL SECURITY FAILURE: Production SECRET_KEY must be at least 32 characters.")
+            if not self.RAZORPAY_KEY_ID or not self.RAZORPAY_KEY_SECRET or not self.RAZORPAY_WEBHOOK_SECRET:
+                raise RuntimeError("FATAL SECURITY FAILURE: Production Razorpay credentials must be fully configured.")
 
 settings = Settings()

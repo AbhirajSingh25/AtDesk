@@ -1,14 +1,15 @@
 from typing import List, Optional, Dict, Any
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, ConfigDict
 from datetime import datetime
 from backend.app.models.models import (
     UserRole, MasterOrderStatus, VendorOrderStatus, 
-    PaymentStatus, SettlementType, SettlementStatus, RefundStatus
+    PaymentStatus, SettlementType, SettlementStatus, RefundStatus,
+    DiscountType
 )
 
-# Auth Schemas
+# ----------------- Auth Schemas -----------------
 class OTPRequest(BaseModel):
-    phone: str = Field(..., example="+919876543210")
+    phone: str = Field(..., json_schema_extra={"example": "+919876543210"})
 
 class OTPVerify(BaseModel):
     phone: str
@@ -34,15 +35,15 @@ class UserOut(BaseModel):
     tower: Optional[str] = None
     floor: Optional[int] = None
     desk_location: Optional[str] = None
-    class Config:
-        from_attributes = True
+    shop_id: Optional[int] = None
+    model_config = ConfigDict(from_attributes=True)
 
 class TokenResponse(BaseModel):
     access_token: str
     token_type: str = "bearer"
     user: UserOut
 
-# Menu & Shop Schemas
+# ----------------- Menu & Shop Schemas -----------------
 class MenuItemOut(BaseModel):
     id: int
     shop_id: int
@@ -56,16 +57,44 @@ class MenuItemOut(BaseModel):
     dietary: str
     prep_time_mins: int
     is_available: bool
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
+
+class MenuItemCreate(BaseModel):
+    shop_id: int
+    category_id: Optional[int] = None
+    name: str
+    description: Optional[str] = None
+    price: float
+    portion_size: Optional[str] = "Regular"
+    image_url: Optional[str] = None
+    is_food: bool = True
+    dietary: str = "VEG"
+    prep_time_mins: int = 10
+    is_available: bool = True
+
+class MenuItemUpdate(BaseModel):
+    name: Optional[str] = None
+    description: Optional[str] = None
+    price: Optional[float] = None
+    portion_size: Optional[str] = None
+    image_url: Optional[str] = None
+    is_food: Optional[bool] = None
+    dietary: Optional[str] = None
+    prep_time_mins: Optional[int] = None
+    is_available: Optional[bool] = None
+    reason: Optional[str] = "Menu update"
 
 class MenuCategoryOut(BaseModel):
     id: int
     name: str
     sort_order: int
     items: List[MenuItemOut] = []
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
+
+class MenuCategoryCreate(BaseModel):
+    shop_id: int
+    name: str
+    sort_order: int = 0
 
 class ShopOut(BaseModel):
     id: int
@@ -78,8 +107,28 @@ class ShopOut(BaseModel):
     is_open: bool
     prep_lead_time_mins: int
     settlement_type: SettlementType
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
+
+class ShopCreate(BaseModel):
+    name: str
+    slug: str
+    image_url: Optional[str] = None
+    category: str
+    location_details: str
+    phone: str
+    is_open: bool = True
+    prep_lead_time_mins: int = 12
+    settlement_type: SettlementType = SettlementType.DAILY
+
+class ShopUpdate(BaseModel):
+    name: Optional[str] = None
+    image_url: Optional[str] = None
+    category: Optional[str] = None
+    location_details: Optional[str] = None
+    phone: Optional[str] = None
+    is_open: Optional[bool] = None
+    prep_lead_time_mins: Optional[int] = None
+    settlement_type: Optional[SettlementType] = None
 
 class ShopDetailOut(ShopOut):
     categories: List[MenuCategoryOut] = []
@@ -91,7 +140,67 @@ class MenuPriceUpdateRequest(BaseModel):
     reason: str
     admin_id: str = "admin@thesortedclub.com"
 
-# Cart & Order Schemas
+# ----------------- Promotional Coupons & Banners -----------------
+class CouponOut(BaseModel):
+    id: int
+    code: str
+    description: Optional[str] = None
+    discount_type: DiscountType
+    discount_value: float
+    min_order_amount: float
+    max_discount: Optional[float] = None
+    is_active: bool
+    usage_count: int
+    valid_until: Optional[datetime] = None
+    model_config = ConfigDict(from_attributes=True)
+
+class CouponCreate(BaseModel):
+    code: str
+    description: Optional[str] = None
+    discount_type: DiscountType = DiscountType.FLAT
+    discount_value: float
+    min_order_amount: float = 0.0
+    max_discount: Optional[float] = None
+    is_active: bool = True
+    valid_until: Optional[datetime] = None
+    max_uses: Optional[int] = None
+
+class CouponApplyRequest(BaseModel):
+    coupon_code: str
+    items_subtotal: float
+
+class CouponApplyResponse(BaseModel):
+    is_valid: bool
+    coupon_code: str
+    discount_amount: float
+    message: str
+    new_grand_total: float
+
+class PromoBannerOut(BaseModel):
+    id: int
+    title: str
+    subtitle: Optional[str] = None
+    badge_text: Optional[str] = None
+    coupon_code: Optional[str] = None
+    image_url: Optional[str] = None
+    bg_gradient: Optional[str] = "from-[#103D32] to-[#1B4332]"
+    action_link: Optional[str] = None
+    sort_order: int
+    is_active: bool
+    model_config = ConfigDict(from_attributes=True)
+
+class PromoBannerCreate(BaseModel):
+    title: str
+    subtitle: Optional[str] = None
+    badge_text: Optional[str] = None
+    coupon_code: Optional[str] = None
+    image_url: Optional[str] = None
+    bg_gradient: Optional[str] = "from-[#103D32] to-[#1B4332]"
+    action_link: Optional[str] = None
+    sort_order: int = 0
+    is_active: bool = True
+
+# ----------------- Cart & Order Schemas -----------------
 class CartItemInput(BaseModel):
     menu_item_id: int
     quantity: int
@@ -103,6 +212,7 @@ class MasterOrderCreate(BaseModel):
     desk_location: str
     delivery_instructions: Optional[str] = None
     payment_method: str = "UPI"
+    coupon_code: Optional[str] = None
     scheduled_window: Optional[str] = None
     idempotency_key: Optional[str] = None
 
@@ -115,8 +225,7 @@ class OrderItemOut(BaseModel):
     subtotal: float
     is_rejected: bool
     rejection_reason: Optional[str] = None
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 class VendorOrderOut(BaseModel):
     id: int
@@ -127,8 +236,7 @@ class VendorOrderOut(BaseModel):
     estimated_prep_time_mins: int
     pickup_confirmed_at: Optional[datetime] = None
     order_items: List[OrderItemOut] = []
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 class MasterOrderOut(BaseModel):
     id: int
@@ -144,6 +252,7 @@ class MasterOrderOut(BaseModel):
     items_subtotal: float
     flat_delivery_fee: float
     discount_amount: float
+    coupon_code: Optional[str] = None
     grand_total: float
     payment_status: PaymentStatus
     master_otp: str
@@ -154,10 +263,11 @@ class MasterOrderOut(BaseModel):
     created_at: datetime
     vendor_orders: List[VendorOrderOut] = []
     estimated_arrival_window: Optional[str] = None
-    class Config:
-        from_attributes = True
+    runner_name: Optional[str] = None
+    runner_phone: Optional[str] = None
+    model_config = ConfigDict(from_attributes=True)
 
-# Cancellation & Refund
+# ----------------- Cancellation & Refund -----------------
 class CancelOrderRequest(BaseModel):
     reason: Optional[str] = "Customer requested cancellation within 2 minutes"
 
@@ -171,13 +281,30 @@ class ItemRejectionRequest(BaseModel):
     order_item_id: int
     reason: str
 
-# Delivery Schemas
+# ----------------- Shop Staff / Inbox Schemas -----------------
+class ShopStaffRegisterRequest(BaseModel):
+    phone: str
+    full_name: str
+    shop_id: int
+    role_title: str = "Counter Staff"
+
+class ShopOrderActionRequest(BaseModel):
+    action: str  # ACCEPT | REJECT | PREPARING | READY
+    estimated_prep_time_mins: Optional[int] = None
+    rejection_reason: Optional[str] = None
+
+class ItemAvailabilityToggle(BaseModel):
+    menu_item_id: int
+    is_available: bool
+
+# ----------------- Delivery Schemas -----------------
 class DeliveryAssignmentOut(BaseModel):
     id: int
     master_order_id: int
     status: str
     order: Optional[MasterOrderOut] = None
     assigned_at: datetime
+    model_config = ConfigDict(from_attributes=True)
 
 class PickupConfirmRequest(BaseModel):
     vendor_order_id: int
@@ -186,14 +313,14 @@ class PickupConfirmRequest(BaseModel):
 class DeliveryProofSubmit(BaseModel):
     master_order_id: int
     photo_data_base64: str  # Direct camera capture data
-    latitude: Optional[float] = 28.4162  # JMD Megapolis Sector 48
-    longitude: Optional[float] = 77.0425
+    latitude: float  # Real device coordinate required
+    longitude: float
 
 class DeliveryOTPVerifyRequest(BaseModel):
     master_order_id: int
     entered_otp: str
 
-# Financial Schemas
+# ----------------- Financial Schemas -----------------
 class DailySettlementCreate(BaseModel):
     shop_id: int
     settlement_date: str  # YYYY-MM-DD
@@ -211,8 +338,7 @@ class DailySettlementOut(BaseModel):
     payout_utr_ref: Optional[str] = None
     paid_at: Optional[datetime] = None
     created_at: datetime
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 class PrepaidTopupRequest(BaseModel):
     shop_id: int
@@ -227,6 +353,7 @@ class PrepaidAccountOut(BaseModel):
     min_threshold_alert: float
     is_low_balance_alerted: bool
     last_topped_up_at: Optional[datetime] = None
+    model_config = ConfigDict(from_attributes=True)
 
 class PrepaidLedgerOut(BaseModel):
     id: int
@@ -236,10 +363,9 @@ class PrepaidLedgerOut(BaseModel):
     reference_id: str
     notes: Optional[str] = None
     created_at: datetime
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
-# Dynamic ETA
+# ----------------- Dynamic ETA -----------------
 class DynamicEtaOut(BaseModel):
     min_eta_mins: int
     max_eta_mins: int
@@ -251,7 +377,7 @@ class DynamicEtaOut(BaseModel):
     total_estimated_mins: int
     factors: Dict[str, Any]
 
-# Admin Dashboard Stats
+# ----------------- Admin Dashboard Stats -----------------
 class DashboardOverviewStats(BaseModel):
     today_orders_count: int
     gross_order_value: float
@@ -263,4 +389,3 @@ class DashboardOverviewStats(BaseModel):
     low_prepaid_shops_count: int
     total_refunds_today: float
     repeat_customer_rate_pct: float
-

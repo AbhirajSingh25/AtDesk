@@ -65,6 +65,8 @@ pg_log.txt
 
 
 # IDE & OS Files
+test_script.py
+scratch/
 .vscode/
 .idea/
 *.swp

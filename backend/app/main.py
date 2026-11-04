@@ -3,12 +3,15 @@ from fastapi.middleware.cors import CORSMiddleware
 from contextlib import asynccontextmanager
 from backend.app.core.config import settings
 from backend.app.core.database import engine, Base
-from backend.app.api import auth, shops, orders, delivery, admin, payments, storage, notifications
+from backend.app.api import auth, shops, orders, delivery, admin, payments, storage, notifications, shop_inbox
 from backend.app.seed.seed_data import seed_database
 from backend.app.core.database import AsyncSessionLocal
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    # Enforce production security check
+    settings.validate_production_secrets()
+    
     # Ensure database connection & tables
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
@@ -20,17 +23,17 @@ async def lifespan(app: FastAPI):
 app = FastAPI(
     title=settings.PROJECT_NAME,
     version=settings.VERSION,
-    description="AtDesk - A Product of The Sorted Club. Premium multi-vendor office delivery platform for JMD Megapolis, Sector 48, Gurugram.",
+    description="AtDesk - A Product of The Sorted Club. Multi-vendor desk delivery platform for JMD Megapolis, Sector 48, Gurugram.",
     lifespan=lifespan
 )
 
-# CORS Middleware
+# CORS Middleware with explicit approved origins
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=settings.CORS_ORIGINS,
     allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+    allow_headers=["Authorization", "Content-Type", "Accept", "Origin", "X-Requested-With", "X-Razorpay-Signature"],
 )
 
 # Mount Routers
@@ -42,6 +45,7 @@ app.include_router(admin.router, prefix="/api")
 app.include_router(payments.router, prefix="/api")
 app.include_router(storage.router, prefix="/api")
 app.include_router(notifications.router, prefix="/api")
+app.include_router(shop_inbox.router, prefix="/api")
 
 @app.get("/health")
 async def health_check():
@@ -50,5 +54,6 @@ async def health_check():
         "product": settings.PROJECT_NAME,
         "brand": settings.PARENT_BRAND,
         "location": settings.LAUNCH_LOCATION,
-        "version": settings.VERSION
+        "version": settings.VERSION,
+        "environment": settings.ENVIRONMENT
     }

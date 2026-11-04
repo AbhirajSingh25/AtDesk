@@ -3,7 +3,8 @@
 import React, { useState, useEffect } from "react";
 import { 
   MasterOrder, Shop, DashboardStats, DailySettlement, 
-  PrepaidAccount, PrepaidLedgerEntry, AuditLogItem 
+  PrepaidAccount, PrepaidLedgerEntry, AuditLogItem, MenuItem,
+  Coupon, PromoBanner
 } from "@/types";
 import { fetchApi } from "@/lib/api";
 import { 
@@ -11,7 +12,9 @@ import {
   Bike, MapPin, Receipt, Wallet, RotateCcw, Users, 
   ShieldAlert, RefreshCw, CheckCircle2, AlertCircle, 
   Search, Filter, ArrowUpRight, Plus, ExternalLink, 
-  ChevronRight, Building2, Check, Clock 
+  ChevronRight, Building2, Check, Clock, Eye, EyeOff,
+  Upload, FileText, Tag, Image, Trash2, Edit3, X, Sparkles,
+  AlertTriangle
 } from "lucide-react";
 
 import { PilotDashboardView } from "./PilotDashboardView";
@@ -19,10 +22,12 @@ import { PilotDashboardView } from "./PilotDashboardView";
 type AdminTab = 
   | "pilot"
   | "overview" 
+  | "exceptions"
   | "live-orders" 
   | "all-orders" 
   | "shops" 
-  | "menu" 
+  | "catalogue"
+  | "promos"
   | "runners" 
   | "settlements" 
   | "prepaid" 
@@ -42,13 +47,49 @@ export function AdminDashboard() {
   const [auditLogs, setAuditLogs] = useState<AuditLogItem[]>([]);
   const [runners, setRunners] = useState<any[]>([]);
 
-  // Interactive Modals
-  const [selectedShopForLedger, setSelectedShopForLedger] = useState<number | null>(null);
-  const [shopLedgerEntries, setShopLedgerEntries] = useState<PrepaidLedgerEntry[]>([]);
-  const [isTopupModalOpen, setIsTopupModalOpen] = useState(false);
-  const [topupShopId, setTopupShopId] = useState<number>(1);
-  const [topupAmount, setTopupAmount] = useState<number>(2000);
-  const [topupUtr, setTopupUtr] = useState<string>("BANK-ADVANCE-778899");
+  // Database-backed Catalogue & Promo state
+  const [menuItems, setMenuItems] = useState<MenuItem[]>([]);
+  const [exceptions, setExceptions] = useState<any[]>([]);
+  const [coupons, setCoupons] = useState<Coupon[]>([]);
+  const [banners, setBanners] = useState<PromoBanner[]>([]);
+
+  // Modals
+  const [isNewItemModalOpen, setIsNewItemModalOpen] = useState(false);
+  const [isBulkCsvModalOpen, setIsBulkCsvModalOpen] = useState(false);
+  const [isCouponModalOpen, setIsCouponModalOpen] = useState(false);
+  const [isBannerModalOpen, setIsBannerModalOpen] = useState(false);
+  const [csvText, setCsvText] = useState("");
+  const [csvFeedback, setCsvFeedback] = useState<string | null>(null);
+
+  // New Item Form
+  const [itemForm, setItemForm] = useState({
+    shop_id: 1,
+    name: "",
+    description: "",
+    price: 150,
+    dietary: "VEG",
+    prep_time_mins: 10,
+    portion_size: "Serves 1",
+    is_food: true,
+    image_url: "",
+  });
+
+  // New Coupon Form
+  const [couponForm, setCouponForm] = useState({
+    code: "",
+    discount_type: "FLAT",
+    discount_value: 50,
+    min_order_amount: 199,
+    max_discount: 100,
+  });
+
+  // New Banner Form
+  const [bannerForm, setBannerForm] = useState({
+    title: "",
+    subtitle: "",
+    image_url: "",
+    badge_text: "FEATURED",
+  });
 
   // Price Modification Modal
   const [isPriceModalOpen, setIsPriceModalOpen] = useState(false);
@@ -57,7 +98,16 @@ export function AdminDashboard() {
   const [newPrice, setNewPrice] = useState<number>(150);
   const [priceReason, setPriceReason] = useState("");
 
-  // Settlement UTR Verification Modal
+  // OTP Reveal State
+  const [revealedOtps, setRevealedOtps] = useState<Record<number, string>>({});
+
+  // Topup Modal
+  const [isTopupModalOpen, setIsTopupModalOpen] = useState(false);
+  const [topupShopId, setTopupShopId] = useState<number>(1);
+  const [topupAmount, setTopupAmount] = useState<number>(2000);
+  const [topupUtr, setTopupUtr] = useState<string>("BANK-ADVANCE-778899");
+
+  // Settlement UTR Modal
   const [isSettleModalOpen, setIsSettleModalOpen] = useState(false);
   const [settleId, setSettleId] = useState<number | null>(null);
   const [settleUtr, setSettleUtr] = useState("");
@@ -68,20 +118,25 @@ export function AdminDashboard() {
     setIsLoading(true);
     try {
       const [
-        sStats, sOrders, sShops, sSettles, sPrepaid, sRefunds, sEmps, sAudits, sRunners
+        sStats, sOrders, sShops, sSettles, sPrepaid, sRefunds, sEmps, sAudits, sRunners,
+        sMenu, sExceptions, sCoupons, sBanners
       ] = await Promise.all([
-        fetchApi<DashboardStats>("/admin/dashboard-stats"),
-        fetchApi<MasterOrder[]>("/admin/orders"),
-        fetchApi<any[]>("/admin/shops"),
-        fetchApi<DailySettlement[]>("/admin/settlements"),
-        fetchApi<PrepaidAccount[]>("/admin/prepaid-accounts"),
-        fetchApi<any[]>("/admin/refunds"),
-        fetchApi<any[]>("/admin/employees"),
-        fetchApi<AuditLogItem[]>("/admin/audit-logs"),
-        fetchApi<any[]>("/admin/delivery-partners"),
+        fetchApi<DashboardStats>("/admin/dashboard-stats").catch(() => null),
+        fetchApi<MasterOrder[]>("/admin/orders").catch(() => []),
+        fetchApi<any[]>("/admin/shops").catch(() => []),
+        fetchApi<DailySettlement[]>("/admin/settlements").catch(() => []),
+        fetchApi<PrepaidAccount[]>("/admin/prepaid-accounts").catch(() => []),
+        fetchApi<any[]>("/admin/refunds").catch(() => []),
+        fetchApi<any[]>("/admin/employees").catch(() => []),
+        fetchApi<AuditLogItem[]>("/admin/audit-logs").catch(() => []),
+        fetchApi<any[]>("/admin/delivery-partners").catch(() => []),
+        fetchApi<MenuItem[]>("/admin/menu-items").catch(() => []),
+        fetchApi<any[]>("/admin/exceptions").catch(() => []),
+        fetchApi<Coupon[]>("/admin/coupons").catch(() => []),
+        fetchApi<PromoBanner[]>("/admin/banners").catch(() => []),
       ]);
 
-      setStats(sStats);
+      if (sStats) setStats(sStats);
       setOrders(sOrders);
       setShops(sShops);
       setSettlements(sSettles);
@@ -90,6 +145,10 @@ export function AdminDashboard() {
       setEmployees(sEmps);
       setAuditLogs(sAudits);
       setRunners(sRunners);
+      setMenuItems(sMenu);
+      setExceptions(sExceptions);
+      setCoupons(sCoupons);
+      setBanners(sBanners);
     } catch (err) {
       console.error("Failed to load admin data", err);
     } finally {
@@ -103,6 +162,124 @@ export function AdminDashboard() {
     return () => clearInterval(interval);
   }, []);
 
+  // Reveal OTP with audit log
+  const handleRevealOtp = async (orderId: number) => {
+    const reason = prompt("Supervisor Audit: Please enter reason for revealing customer OTP (e.g. Employee unable to unlock phone):", "Customer phone battery dead");
+    if (!reason) return;
+    try {
+      const res = await fetchApi<{ master_otp: string; order_id: number }>(`/admin/orders/${orderId}/reveal-otp`, {
+        method: "POST",
+        body: JSON.stringify({ reason }),
+      });
+      setRevealedOtps((prev) => ({ ...prev, [orderId]: res.master_otp }));
+    } catch (e: any) {
+      alert(e.message || "Failed to reveal OTP");
+    }
+  };
+
+  // Create Menu Item
+  const handleCreateMenuItem = async () => {
+    try {
+      await fetchApi("/admin/menu-items", {
+        method: "POST",
+        body: JSON.stringify(itemForm),
+      });
+      setIsNewItemModalOpen(false);
+      setItemForm({
+        shop_id: 1,
+        name: "",
+        description: "",
+        price: 150,
+        dietary: "VEG",
+        prep_time_mins: 10,
+        portion_size: "Serves 1",
+        is_food: true,
+        image_url: "",
+      });
+      await loadAllData();
+    } catch (e: any) {
+      alert(e.message || "Failed to create menu item");
+    }
+  };
+
+  // Bulk CSV Upload
+  const handleBulkCsv = async () => {
+    setCsvFeedback(null);
+    try {
+      const res = await fetchApi<{ success: boolean; imported_count: number; message: string }>("/admin/menu-items/bulk-csv", {
+        method: "POST",
+        body: JSON.stringify({ csv_content: csvText }),
+      });
+      setCsvFeedback(`Success: ${res.message} (${res.imported_count} items)`);
+      setCsvText("");
+      setTimeout(async () => {
+        setIsBulkCsvModalOpen(false);
+        setCsvFeedback(null);
+        await loadAllData();
+      }, 1200);
+    } catch (e: any) {
+      setCsvFeedback(e.message || "CSV Import Failed");
+    }
+  };
+
+  // Create Coupon
+  const handleCreateCoupon = async () => {
+    try {
+      await fetchApi("/admin/coupons", {
+        method: "POST",
+        body: JSON.stringify(couponForm),
+      });
+      setIsCouponModalOpen(false);
+      setCouponForm({
+        code: "",
+        discount_type: "FLAT",
+        discount_value: 50,
+        min_order_amount: 199,
+        max_discount: 100,
+      });
+      await loadAllData();
+    } catch (e: any) {
+      alert(e.message || "Failed to create coupon");
+    }
+  };
+
+  // Create Banner
+  const handleCreateBanner = async () => {
+    try {
+      await fetchApi("/admin/banners", {
+        method: "POST",
+        body: JSON.stringify(bannerForm),
+      });
+      setIsBannerModalOpen(false);
+      setBannerForm({ title: "", subtitle: "", image_url: "", badge_text: "FEATURED" });
+      await loadAllData();
+    } catch (e: any) {
+      alert(e.message || "Failed to create banner");
+    }
+  };
+
+  const handleUpdatePrice = async () => {
+    if (!priceReason) {
+      alert("Mandatory audit requirement: Please state the business reason for price change.");
+      return;
+    }
+    try {
+      await fetchApi(`/admin/menu/price-update?item_id=${priceItemId}`, {
+        method: "POST",
+        body: JSON.stringify({
+          new_price: newPrice,
+          reason: priceReason,
+          admin_id: "operations@thesortedclub.com",
+        }),
+      });
+      setIsPriceModalOpen(false);
+      setPriceReason("");
+      await loadAllData();
+    } catch (e: any) {
+      alert(e.message || "Failed to update price");
+    }
+  };
+
   const handleToggleShop = async (shopId: number) => {
     try {
       await fetchApi(`/admin/shops/${shopId}/toggle-status`, { method: "POST" });
@@ -114,244 +291,418 @@ export function AdminDashboard() {
 
   const handleAdvanceOrderStatus = async (orderId: number, nextStatus: string) => {
     try {
-      await fetchApi(`/admin/orders/${orderId}/advance-status?next_status=${nextStatus}`, {
+      await fetchApi(`/admin/orders/${orderId}/status?status=${nextStatus}`, {
         method: "POST",
       });
       await loadAllData();
     } catch (e: any) {
-      alert(e.message || "Failed to update status");
+      alert(e.message || "Failed to advance order status");
     }
   };
 
-  const handlePriceUpdate = async () => {
-    if (!priceReason) {
-      alert("Please provide a reason for the menu price change.");
-      return;
-    }
+  const handleTopupPrepaid = async () => {
     try {
-      await fetchApi(`/admin/menu/price-update?item_id=${priceItemId}`, {
+      await fetchApi(`/admin/prepaid-accounts/${topupShopId}/topup`, {
         method: "POST",
         body: JSON.stringify({
-          new_price: newPrice,
-          reason: priceReason,
-          admin_id: "admin@thesortedclub.com",
-        }),
-      });
-      setIsPriceModalOpen(false);
-      setPriceReason("");
-      await loadAllData();
-      alert("Menu item price updated and logged to audit trail.");
-    } catch (e: any) {
-      alert(e.message || "Failed to update price");
-    }
-  };
-
-  const handlePrepaidTopup = async () => {
-    try {
-      await fetchApi("/admin/prepaid/topup", {
-        method: "POST",
-        body: JSON.stringify({
-          shop_id: topupShopId,
           amount: topupAmount,
-          reference_id: topupUtr,
-          notes: "Advance prepaid balance recharge via admin operations",
+          bank_utr: topupUtr,
+          notes: "Operations console verified bank transfer",
         }),
       });
       setIsTopupModalOpen(false);
       await loadAllData();
-      alert("Prepaid account credited successfully.");
     } catch (e: any) {
-      alert(e.message || "Failed to topup prepaid balance");
+      alert(e.message || "Failed to topup prepaid account");
     }
   };
 
-  const handleViewLedger = async (shopId: number) => {
-    setSelectedShopForLedger(shopId);
+  const handleMarkSettlementPaid = async () => {
+    if (!settleId || !settleUtr) return;
     try {
-      const ledger = await fetchApi<PrepaidLedgerEntry[]>(`/admin/prepaid-accounts/${shopId}/ledger`);
-      setShopLedgerEntries(ledger);
-    } catch (e) {
-      console.error(e);
-    }
-  };
-
-  const handleVerifySettle = async () => {
-    if (!settleId || !settleUtr) {
-      alert("Please enter banking transaction UTR reference");
-      return;
-    }
-    try {
-      await fetchApi(`/admin/settlements/${settleId}/verify-and-pay`, {
+      await fetchApi(`/admin/settlements/${settleId}/mark-paid?payout_utr_ref=${settleUtr}`, {
         method: "POST",
-        body: JSON.stringify({ utr_reference: settleUtr }),
       });
       setIsSettleModalOpen(false);
       setSettleUtr("");
       await loadAllData();
-      alert("Settlement marked PAID with UTR recorded.");
     } catch (e: any) {
-      alert(e.message || "Failed to verify settlement");
+      alert(e.message || "Failed to record payout");
     }
   };
 
   return (
-    <div className="min-h-screen bg-brand-ivory text-brand-charcoal flex flex-col md:flex-row">
-      {/* Desktop Sidebar Navigation */}
-      <aside className="w-full md:w-64 bg-brand-forest text-brand-ivory shrink-0 border-r border-brand-forest-dark flex flex-col justify-between">
-        <div className="p-4 space-y-6">
-          {/* Brand header */}
-          <div className="flex items-center gap-2.5 px-2">
-            <div className="w-8 h-8 rounded-xl bg-brand-sage text-brand-forest flex items-center justify-center font-heading font-extrabold text-base">
-              @
+    <div className="min-h-screen bg-brand-ivory text-brand-charcoal flex flex-col md:flex-row pb-16 md:pb-0">
+      {/* Sidebar Navigation (Desktop) */}
+      <aside className="hidden md:flex flex-col w-64 bg-brand-forest text-brand-ivory p-4 border-r border-brand-forest-dark shrink-0">
+        <div className="flex items-center gap-2 px-2 py-3 mb-4">
+          <div className="w-8 h-8 rounded-xl bg-brand-sage text-brand-forest font-heading font-extrabold flex items-center justify-center text-sm">
+            @
+          </div>
+          <div>
+            <div className="font-heading font-extrabold text-sm text-white">
+              AtDesk Operations
             </div>
-            <div>
-              <div className="font-heading font-bold text-sm text-white tracking-wide">
-                AtDesk Command
-              </div>
-              <div className="text-[10px] text-brand-sage/80">
-                The Sorted Club Operations
-              </div>
+            <div className="text-[10px] text-brand-sage/80">
+              JMD Megapolis Console
             </div>
           </div>
-
-          {/* Navigation Links */}
-          <nav className="space-y-1 text-xs">
-            {[
-              { id: "pilot", label: "Commercial Pilot (JMD)", icon: Building2 },
-              { id: "overview", label: "Overview & KPIs", icon: LayoutDashboard },
-              { id: "live-orders", label: "Live Order Stages", icon: ShoppingCart },
-              { id: "all-orders", label: "All Orders Archive", icon: Receipt },
-              { id: "shops", label: "Shops Management", icon: Store },
-              { id: "menu", label: "Menu & Price Audits", icon: UtensilsCrossed },
-              { id: "runners", label: "Delivery Fleet", icon: Bike },
-              { id: "settlements", label: "Daily Settlements", icon: Receipt },
-              { id: "prepaid", label: "Prepaid Shop Ledgers", icon: Wallet },
-              { id: "refunds", label: "Refund Management", icon: RotateCcw },
-              { id: "employees", label: "JMD Megapolis Users", icon: Users },
-              { id: "audit", label: "Security & Audit Logs", icon: ShieldAlert },
-            ].map((item) => {
-              const Icon = item.icon;
-              const isActive = activeTab === item.id;
-              return (
-                <button
-                  key={item.id}
-                  onClick={() => setActiveTab(item.id as AdminTab)}
-                  className={`w-full flex items-center gap-2.5 px-3 py-2.5 rounded-xl font-medium transition-all ${
-                    isActive
-                      ? "bg-brand-sage text-brand-forest font-bold shadow-sm"
-                      : "text-brand-ivory/80 hover:bg-white/10 hover:text-white"
-                  }`}
-                >
-                  <Icon className="w-4 h-4 shrink-0" />
-                  <span>{item.label}</span>
-                </button>
-              );
-            })}
-          </nav>
         </div>
 
-        {/* Footer Info */}
-        <div className="p-4 border-t border-brand-forest-dark text-[11px] text-brand-sage/70 space-y-1">
-          <div className="flex items-center gap-1.5 font-medium text-white">
-            <Building2 className="w-3.5 h-3.5 text-brand-tangerine" />
-            <span>JMD Megapolis, Sector 48</span>
-          </div>
-          <div>No Vendor App Required</div>
-          <div className="text-[9px] text-brand-sage/50">v1.0.0 Production Core</div>
+        <nav className="flex-1 space-y-1 text-xs font-semibold">
+          {[
+            { id: "pilot", label: "Operations Command", icon: ShieldAlert },
+            { id: "exceptions", label: `Exceptions (${exceptions.length})`, icon: AlertTriangle },
+            { id: "overview", label: "Dashboard Metrics", icon: LayoutDashboard },
+            { id: "live-orders", label: "Live Order Stages", icon: Clock },
+            { id: "all-orders", label: "Orders History", icon: ShoppingCart },
+            { id: "shops", label: "Shop Partners", icon: Store },
+            { id: "catalogue", label: "Catalogue CRUD", icon: UtensilsCrossed },
+            { id: "promos", label: "Coupons & Banners", icon: Tag },
+            { id: "runners", label: "Fleet Runners", icon: Bike },
+            { id: "settlements", label: "Daily Settlements", icon: Receipt },
+            { id: "prepaid", label: "Prepaid Accounts", icon: Wallet },
+            { id: "refunds", label: "Refunds & Reversals", icon: RotateCcw },
+            { id: "employees", label: "Registered Desks", icon: Users },
+            { id: "audit", label: "Audit Logs", icon: ShieldCheck },
+          ].map((item) => {
+            const Icon = item.icon;
+            const isActive = activeTab === item.id;
+            return (
+              <button
+                key={item.id}
+                onClick={() => setActiveTab(item.id as AdminTab)}
+                className={`w-full flex items-center gap-2.5 px-3 py-2.5 rounded-xl transition-all ${
+                  isActive
+                    ? "bg-brand-sage text-brand-forest shadow-xs font-bold"
+                    : "text-brand-ivory/80 hover:bg-brand-forest-dark hover:text-white"
+                }`}
+              >
+                <Icon className="w-4 h-4" />
+                <span>{item.label}</span>
+              </button>
+            );
+          })}
+        </nav>
+
+        <div className="pt-4 border-t border-brand-forest-dark text-[11px] text-brand-sage/60 px-2 flex justify-between items-center">
+          <span>Campus: JMD Megapolis</span>
+          <button onClick={loadAllData} className="hover:text-white">
+            <RefreshCw className={`w-3.5 h-3.5 ${isLoading ? "animate-spin" : ""}`} />
+          </button>
         </div>
       </aside>
 
       {/* Main Content Area */}
-      <main className="flex-1 p-4 md:p-8 overflow-y-auto space-y-6">
-        {/* Top Header */}
-        <div className="flex flex-wrap items-center justify-between gap-4 border-b border-brand-sage/60 pb-4">
+      <main className="flex-1 flex flex-col min-w-0 overflow-y-auto">
+        {/* Top Operations Header */}
+        <header className="bg-white border-b border-brand-sage px-6 py-4 flex items-center justify-between sticky top-0 z-20">
           <div>
-            <h1 className="font-heading font-extrabold text-2xl text-brand-charcoal capitalize">
-              {activeTab.replace(/-/g, " ")}
-            </h1>
-            <p className="text-xs text-brand-charcoal-muted mt-0.5">
-              Live source of truth: PostgreSQL normalized database & immutable financial ledgers.
+            <h2 className="font-heading font-extrabold text-lg text-brand-forest capitalize">
+              {activeTab.replace("-", " ")}
+            </h2>
+            <p className="text-xs text-brand-charcoal-muted">
+              Campus JMD Megapolis, Sector 48, Gurugram
             </p>
           </div>
 
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-3">
             <button
               onClick={loadAllData}
-              className="flex items-center gap-1.5 px-3.5 py-2 bg-white text-brand-charcoal hover:bg-brand-sage-light border border-brand-sage rounded-xl text-xs font-semibold shadow-soft transition-all"
+              className="px-3 py-1.5 bg-brand-ivory hover:bg-brand-sage-light border border-brand-sage rounded-xl text-xs font-semibold flex items-center gap-1.5"
             >
-              <RefreshCw className="w-3.5 h-3.5 text-brand-forest" />
-              <span>Sync Live State</span>
+              <RefreshCw className={`w-3.5 h-3.5 ${isLoading ? "animate-spin" : ""}`} />
+              <span>Refresh</span>
             </button>
           </div>
-        </div>
+        </header>
 
-        {/* TAB 0: CONTROLLED COMMERCIAL PILOT */}
-        {activeTab === "pilot" && <PilotDashboardView />}
+        <div className="p-6 space-y-6">
+          {/* TAB: OPERATIONS PILOT VIEW */}
+          {activeTab === "pilot" && (
+            <PilotDashboardView onSwitchTab={(tab) => setActiveTab(tab as AdminTab)} />
+          )}
 
-        {/* TAB 1: OVERVIEW & KPIS */}
-        {activeTab === "overview" && stats && (
-          <div className="space-y-6">
-            {/* KPI Cards Grid */}
-            <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
-              <div className="bg-white p-4 rounded-3xl border border-brand-sage/80 shadow-soft">
-                <span className="text-xs text-brand-charcoal-muted block">Gross Order Value</span>
-                <span className="text-2xl font-mono font-bold text-brand-forest mt-1 block">
-                  ₹{stats.gross_order_value}
-                </span>
-                <span className="text-[10px] text-emerald-600 font-semibold mt-1 block">
-                  {stats.today_orders_count} orders placed today
-                </span>
+          {/* TAB: EXCEPTIONS QUEUE */}
+          {activeTab === "exceptions" && (
+            <div className="bg-white rounded-3xl p-6 border border-brand-sage shadow-soft space-y-4">
+              <div className="flex items-center justify-between">
+                <div>
+                  <h3 className="font-heading font-bold text-base text-brand-charcoal flex items-center gap-2">
+                    <AlertTriangle className="w-5 h-5 text-amber-500" />
+                    <span>Live Order Exception Queue</span>
+                  </h3>
+                  <p className="text-xs text-brand-charcoal-muted">
+                    Delayed vendor orders, unaccepted tickets, and runner pickup bottlenecks requiring operational escalation.
+                  </p>
+                </div>
               </div>
 
-              <div className="bg-white p-4 rounded-3xl border border-brand-sage/80 shadow-soft">
-                <span className="text-xs text-brand-charcoal-muted block">Delivery Fee Revenue</span>
-                <span className="text-2xl font-mono font-bold text-brand-forest mt-1 block">
-                  ₹{stats.delivery_fee_revenue}
-                </span>
-                <span className="text-[10px] text-brand-charcoal-muted mt-1 block">
-                  Flat ₹25 per desk drop
-                </span>
+              {exceptions.length === 0 ? (
+                <div className="p-12 text-center text-xs text-brand-charcoal-muted space-y-2">
+                  <CheckCircle2 className="w-10 h-10 text-emerald-600 mx-auto" />
+                  <p className="font-bold text-brand-forest">All Clear — Zero Unhandled Exceptions</p>
+                  <p>All active orders are on schedule across JMD Megapolis concourse shops.</p>
+                </div>
+              ) : (
+                <div className="divide-y divide-brand-sage/60">
+                  {exceptions.map((exc) => (
+                    <div key={exc.id} className="py-3.5 flex items-start justify-between gap-4">
+                      <div className="space-y-1">
+                        <div className="flex items-center gap-2">
+                          <span className="font-mono font-bold text-xs text-brand-forest">
+                            #{exc.order_number}
+                          </span>
+                          <span className="text-[10px] font-bold bg-amber-100 text-amber-800 px-2 py-0.5 rounded-full">
+                            {exc.status}
+                          </span>
+                        </div>
+                        <div className="text-xs text-brand-charcoal font-medium">
+                          {exc.tower}, {exc.desk_location}
+                        </div>
+                        <div className="text-[11px] text-brand-charcoal-muted">
+                          Shops: {exc.vendor_orders?.map((vo: any) => vo.shop_name).join(", ")}
+                        </div>
+                      </div>
+
+                      <div className="flex items-center gap-2 shrink-0">
+                        <button
+                          onClick={() => handleAdvanceOrderStatus(exc.id, "OUT_FOR_DELIVERY")}
+                          className="px-3 py-1.5 bg-brand-forest hover:bg-brand-forest-dark text-white text-xs font-bold rounded-xl"
+                        >
+                          Dispatch Runner
+                        </button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* TAB: CATALOGUE MANAGEMENT (CRUD & BULK CSV) */}
+          {activeTab === "catalogue" && (
+            <div className="bg-white rounded-3xl p-6 border border-brand-sage shadow-soft space-y-5">
+              <div className="flex flex-wrap items-center justify-between gap-3 border-b border-brand-sage pb-4">
+                <div>
+                  <h3 className="font-heading font-bold text-base text-brand-charcoal flex items-center gap-2">
+                    <UtensilsCrossed className="w-5 h-5 text-brand-forest" />
+                    <span>Concourse Menu Catalogue</span>
+                  </h3>
+                  <p className="text-xs text-brand-charcoal-muted">
+                    Database-driven menu items, dietary tags, preparation times, and prices.
+                  </p>
+                </div>
+
+                <div className="flex items-center gap-2">
+                  <button
+                    onClick={() => setIsBulkCsvModalOpen(true)}
+                    className="px-3.5 py-2 bg-brand-ivory hover:bg-brand-sage-light border border-brand-sage text-brand-forest text-xs font-bold rounded-xl flex items-center gap-1.5 shadow-xs"
+                  >
+                    <Upload className="w-4 h-4" />
+                    <span>Bulk Import CSV</span>
+                  </button>
+
+                  <button
+                    onClick={() => setIsNewItemModalOpen(true)}
+                    className="px-4 py-2 bg-brand-forest hover:bg-brand-forest-dark text-brand-ivory text-xs font-bold rounded-xl flex items-center gap-1.5 shadow-sm"
+                  >
+                    <Plus className="w-4 h-4" />
+                    <span>Add Menu Item</span>
+                  </button>
+                </div>
               </div>
 
-              <div className="bg-white p-4 rounded-3xl border border-brand-sage/80 shadow-soft">
-                <span className="text-xs text-brand-charcoal-muted block">Active Operations</span>
-                <span className="text-2xl font-mono font-bold text-brand-tangerine mt-1 block">
-                  {stats.active_deliveries_count}
-                </span>
-                <span className="text-[10px] text-brand-charcoal-muted mt-1 block">
-                  Avg Delivery: {stats.avg_delivery_time_mins} mins
-                </span>
-              </div>
-
-              <div className="bg-white p-4 rounded-3xl border border-brand-sage/80 shadow-soft">
-                <span className="text-xs text-brand-charcoal-muted block">Financial Alerts</span>
-                <span className="text-2xl font-mono font-bold text-rose-600 mt-1 block">
-                  {stats.low_prepaid_shops_count}
-                </span>
-                <span className="text-[10px] text-brand-charcoal-muted mt-1 block">
-                  Shops below prepaid threshold
-                </span>
+              {/* Menu Items Table */}
+              <div className="overflow-x-auto">
+                <table className="w-full text-xs text-left">
+                  <thead>
+                    <tr className="border-b border-brand-sage text-brand-charcoal-muted">
+                      <th className="py-2.5 px-3">Item</th>
+                      <th className="py-2.5 px-3">Shop</th>
+                      <th className="py-2.5 px-3">Dietary</th>
+                      <th className="py-2.5 px-3">Prep Lead</th>
+                      <th className="py-2.5 px-3">Price</th>
+                      <th className="py-2.5 px-3">Status</th>
+                      <th className="py-2.5 px-3 text-right">Actions</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-brand-sage/40">
+                    {menuItems.map((item) => (
+                      <tr key={item.id} className="hover:bg-brand-ivory/50">
+                        <td className="py-3 px-3">
+                          <div className="font-bold text-brand-charcoal">{item.name}</div>
+                          {item.portion_size && (
+                            <span className="text-[10px] text-brand-charcoal-muted">
+                              {item.portion_size}
+                            </span>
+                          )}
+                        </td>
+                        <td className="py-3 px-3 text-brand-forest font-semibold">
+                          {shops.find((s) => s.id === item.shop_id)?.name || `Shop #${item.shop_id}`}
+                        </td>
+                        <td className="py-3 px-3">
+                          <span
+                            className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${
+                              item.dietary === "VEG"
+                                ? "bg-emerald-100 text-emerald-800"
+                                : item.dietary === "NON_VEG"
+                                ? "bg-red-100 text-red-800"
+                                : "bg-amber-100 text-amber-800"
+                            }`}
+                          >
+                            {item.dietary}
+                          </span>
+                        </td>
+                        <td className="py-3 px-3 font-mono text-brand-charcoal-muted">
+                          ~{item.prep_time_mins} mins
+                        </td>
+                        <td className="py-3 px-3 font-mono font-bold text-brand-forest">
+                          ₹{item.price}
+                        </td>
+                        <td className="py-3 px-3">
+                          <span
+                            className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${
+                              item.is_available
+                                ? "bg-emerald-100 text-emerald-800"
+                                : "bg-rose-100 text-rose-800"
+                            }`}
+                          >
+                            {item.is_available ? "In Stock" : "86'd Out"}
+                          </span>
+                        </td>
+                        <td className="py-3 px-3 text-right">
+                          <button
+                            onClick={() => {
+                              setPriceItemId(item.id);
+                              setPriceItemName(item.name);
+                              setNewPrice(item.price);
+                              setIsPriceModalOpen(true);
+                            }}
+                            className="px-2.5 py-1 bg-brand-forest/10 hover:bg-brand-forest text-brand-forest hover:text-white rounded-lg text-xs font-semibold transition-colors"
+                          >
+                            Edit Price
+                          </button>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
               </div>
             </div>
+          )}
 
-            {/* Quick Live Orders Summary */}
-            <div className="bg-white rounded-3xl p-6 border border-brand-sage/80 shadow-soft space-y-4">
+          {/* TAB: PROMOS & COUPONS */}
+          {activeTab === "promos" && (
+            <div className="space-y-6">
+              {/* Coupons Section */}
+              <div className="bg-white rounded-3xl p-6 border border-brand-sage shadow-soft space-y-4">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <h3 className="font-heading font-bold text-base text-brand-charcoal flex items-center gap-2">
+                      <Tag className="w-5 h-5 text-brand-tangerine" />
+                      <span>Promotional Coupons Engine</span>
+                    </h3>
+                    <p className="text-xs text-brand-charcoal-muted">
+                      Admin-scheduled coupon discounts applicable at multi-vendor checkout.
+                    </p>
+                  </div>
+                  <button
+                    onClick={() => setIsCouponModalOpen(true)}
+                    className="px-4 py-2 bg-brand-forest hover:bg-brand-forest-dark text-brand-ivory text-xs font-bold rounded-xl flex items-center gap-1.5"
+                  >
+                    <Plus className="w-4 h-4" />
+                    <span>Create Coupon</span>
+                  </button>
+                </div>
+
+                <div className="grid gap-3 sm:grid-cols-2 md:grid-cols-3">
+                  {coupons.map((coupon) => (
+                    <div
+                      key={coupon.id}
+                      className="p-4 rounded-2xl border border-brand-sage/80 bg-brand-ivory/40 space-y-2"
+                    >
+                      <div className="flex items-center justify-between">
+                        <span className="font-mono font-extrabold text-sm text-brand-forest bg-white px-2.5 py-1 rounded-lg border border-brand-sage">
+                          {coupon.code}
+                        </span>
+                        <span className="text-[10px] font-bold bg-emerald-100 text-emerald-800 px-2 py-0.5 rounded-full">
+                          ACTIVE
+                        </span>
+                      </div>
+                      <div className="text-xs text-brand-charcoal font-semibold">
+                        {coupon.discount_type === "FLAT" ? `Flat ₹${coupon.discount_value} OFF` : `${coupon.discount_value}% OFF`}
+                      </div>
+                      <div className="text-[11px] text-brand-charcoal-muted">
+                        Min Order: ₹{coupon.min_order_amount}
+                        {coupon.max_discount ? ` • Max: ₹${coupon.max_discount}` : ""}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+
+              {/* Banners Section */}
+              <div className="bg-white rounded-3xl p-6 border border-brand-sage shadow-soft space-y-4">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <h3 className="font-heading font-bold text-base text-brand-charcoal flex items-center gap-2">
+                      <Image className="w-5 h-5 text-brand-forest" />
+                      <span>Customer App Promotional Banners</span>
+                    </h3>
+                    <p className="text-xs text-brand-charcoal-muted">
+                      Display banners rendered in the Swiggy-style carousel in the employee app.
+                    </p>
+                  </div>
+                  <button
+                    onClick={() => setIsBannerModalOpen(true)}
+                    className="px-4 py-2 bg-brand-forest hover:bg-brand-forest-dark text-brand-ivory text-xs font-bold rounded-xl flex items-center gap-1.5"
+                  >
+                    <Plus className="w-4 h-4" />
+                    <span>Add Banner</span>
+                  </button>
+                </div>
+
+                <div className="grid gap-3 sm:grid-cols-2 md:grid-cols-3">
+                  {banners.map((banner) => (
+                    <div
+                      key={banner.id}
+                      className="h-32 rounded-2xl overflow-hidden relative border border-brand-sage/80 shadow-soft"
+                    >
+                      <img src={banner.image_url} alt={banner.title} className="w-full h-full object-cover" />
+                      <div className="absolute inset-0 bg-gradient-to-t from-black/80 via-black/40 to-transparent p-3 flex flex-col justify-end text-white">
+                        {banner.badge_text && (
+                          <span className="self-start text-[9px] font-bold bg-brand-tangerine text-brand-charcoal px-2 py-0.5 rounded-full mb-1">
+                            {banner.badge_text}
+                          </span>
+                        )}
+                        <h4 className="font-heading font-bold text-xs">{banner.title}</h4>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* TAB: ORDERS WITH MASKED OTP */}
+          {(activeTab === "all-orders" || activeTab === "overview") && (
+            <div className="bg-white rounded-3xl p-6 border border-brand-sage shadow-soft space-y-4">
               <div className="flex items-center justify-between">
-                <h3 className="font-heading font-bold text-base text-brand-charcoal">
-                  Recent Master Orders in JMD Megapolis
-                </h3>
-                <button
-                  onClick={() => setActiveTab("live-orders")}
-                  className="text-xs font-semibold text-brand-forest underline hover:text-brand-tangerine"
-                >
-                  Open Operations Kanban
-                </button>
+                <div>
+                  <h3 className="font-heading font-bold text-base text-brand-charcoal">
+                    Multi-Shop Orders & Security Verification
+                  </h3>
+                  <p className="text-xs text-brand-charcoal-muted">
+                    Customer OTP is masked by default for privacy. Reveals require supervisor audit reasons.
+                  </p>
+                </div>
               </div>
 
               <div className="overflow-x-auto">
                 <table className="w-full text-xs text-left">
                   <thead>
-                    <tr className="border-b border-brand-sage/60 text-brand-charcoal-muted">
+                    <tr className="border-b border-brand-sage text-brand-charcoal-muted">
                       <th className="py-2.5 px-3">Order Number</th>
                       <th className="py-2.5 px-3">Customer Desk</th>
                       <th className="py-2.5 px-3">Shops</th>
@@ -362,7 +713,7 @@ export function AdminDashboard() {
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-brand-sage/40">
-                    {orders.slice(0, 5).map((ord) => (
+                    {orders.map((ord) => (
                       <tr key={ord.id} className="hover:bg-brand-ivory/50">
                         <td className="py-3 px-3 font-mono font-semibold text-brand-forest">
                           {ord.order_number}
@@ -374,7 +725,7 @@ export function AdminDashboard() {
                           </div>
                         </td>
                         <td className="py-3 px-3">
-                          {ord.vendor_orders.map((vo) => vo.shop_name).join(", ")}
+                          {ord.vendor_orders?.map((vo) => vo.shop_name).join(", ")}
                         </td>
                         <td className="py-3 px-3 font-mono font-bold">₹{ord.grand_total}</td>
                         <td className="py-3 px-3">
@@ -382,8 +733,23 @@ export function AdminDashboard() {
                             {ord.status}
                           </span>
                         </td>
-                        <td className="py-3 px-3 font-mono font-extrabold text-brand-tangerine">
-                          {ord.master_otp}
+                        <td className="py-3 px-3 font-mono font-bold">
+                          {revealedOtps[ord.id] ? (
+                            <span className="text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded border border-emerald-300">
+                              {revealedOtps[ord.id]}
+                            </span>
+                          ) : (
+                            <div className="flex items-center gap-1.5">
+                              <span className="text-brand-charcoal-muted">••••••</span>
+                              <button
+                                onClick={() => handleRevealOtp(ord.id)}
+                                title="Reveal customer OTP with supervisor audit"
+                                className="p-1 hover:bg-brand-sage rounded text-brand-forest"
+                              >
+                                <Eye className="w-3.5 h-3.5" />
+                              </button>
+                            </div>
+                          )}
                         </td>
                         <td className="py-3 px-3 text-right">
                           <button
@@ -399,709 +765,512 @@ export function AdminDashboard() {
                 </table>
               </div>
             </div>
-          </div>
-        )}
+          )}
 
-        {/* TAB 2: LIVE ORDER STAGES (KANBAN) */}
-        {activeTab === "live-orders" && (
-          <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
-            {[
-              { status: "CONFIRMED", title: "1. Confirmed / Coordinating", bg: "border-brand-sage" },
-              { status: "PREPARING", title: "2. Shop Preparing", bg: "border-amber-300" },
-              { status: "OUT_FOR_DELIVERY", title: "3. Out for Desk Drop", bg: "border-brand-forest" },
-              { status: "DELIVERED", title: "4. Delivered & Verified", bg: "border-emerald-300" },
-            ].map((col) => {
-              const colOrders = orders.filter((o) => o.status === col.status);
-              return (
-                <div
-                  key={col.status}
-                  className={`bg-white rounded-3xl p-4 border-2 ${col.bg} shadow-soft flex flex-col space-y-3 min-h-[450px]`}
-                >
-                  <div className="flex items-center justify-between pb-2 border-b border-brand-sage/60">
-                    <h4 className="font-heading font-bold text-xs text-brand-charcoal">
-                      {col.title}
-                    </h4>
-                    <span className="text-xs font-mono font-bold bg-brand-sage-light text-brand-forest px-2 py-0.5 rounded-full">
-                      {colOrders.length}
-                    </span>
-                  </div>
-
-                  <div className="space-y-3 overflow-y-auto flex-1">
-                    {colOrders.map((o) => (
-                      <div
-                        key={o.id}
-                        className="p-3 bg-brand-ivory/50 rounded-2xl border border-brand-sage/80 space-y-2 text-xs"
-                      >
-                        <div className="flex justify-between items-start">
-                          <span className="font-mono font-bold text-brand-forest">
-                            #{o.order_number}
-                          </span>
-                          <span className="font-mono font-bold">₹{o.grand_total}</span>
-                        </div>
-
-                        <div className="text-[11px]">
-                          <span className="font-semibold">{o.tower}, Floor {o.floor}</span>
-                          <div className="text-brand-charcoal-muted font-mono">{o.desk_location}</div>
-                        </div>
-
-                        <div className="text-[10px] text-brand-charcoal-muted">
-                          OTP: <span className="font-mono font-bold text-brand-tangerine">{o.master_otp}</span>
-                        </div>
-
-                        {/* Quick state transition */}
-                        <div className="pt-2 border-t border-brand-sage/40 flex justify-end gap-1.5">
-                          {col.status === "CONFIRMED" && (
-                            <button
-                              onClick={() => handleAdvanceOrderStatus(o.id, "PREPARING")}
-                              className="px-2.5 py-1 bg-brand-forest text-brand-ivory rounded-lg text-[10px] font-semibold"
-                            >
-                              Move to Prep
-                            </button>
-                          )}
-                          {col.status === "PREPARING" && (
-                            <button
-                              onClick={() => handleAdvanceOrderStatus(o.id, "OUT_FOR_DELIVERY")}
-                              className="px-2.5 py-1 bg-brand-forest text-brand-ivory rounded-lg text-[10px] font-semibold"
-                            >
-                              Dispatch Runner
-                            </button>
-                          )}
-                          {col.status === "OUT_FOR_DELIVERY" && (
-                            <button
-                              onClick={() => handleAdvanceOrderStatus(o.id, "DELIVERED")}
-                              className="px-2.5 py-1 bg-emerald-600 text-white rounded-lg text-[10px] font-semibold"
-                            >
-                              Mark Delivered
-                            </button>
-                          )}
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              );
-            })}
-          </div>
-        )}
-
-        {/* TAB 4: SHOPS MANAGEMENT */}
-        {activeTab === "shops" && (
-          <div className="bg-white rounded-3xl p-6 border border-brand-sage shadow-soft space-y-4">
-            <div className="flex items-center justify-between">
-              <div>
-                <h3 className="font-heading font-bold text-base text-brand-charcoal">
-                  Shop Partners & Operating Controls
-                </h3>
-                <p className="text-xs text-brand-charcoal-muted">
-                  Control availability without vendor app. Admin approves all updates.
-                </p>
-              </div>
-            </div>
-
-            <div className="overflow-x-auto">
-              <table className="w-full text-xs text-left">
-                <thead>
-                  <tr className="border-b border-brand-sage text-brand-charcoal-muted">
-                    <th className="py-2.5 px-3">Shop</th>
-                    <th className="py-2.5 px-3">Location in Megapolis</th>
-                    <th className="py-2.5 px-3">Settlement Model</th>
-                    <th className="py-2.5 px-3">Prepaid Balance</th>
-                    <th className="py-2.5 px-3">Operating State</th>
-                    <th className="py-2.5 px-3 text-right">Toggle State</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-brand-sage/40">
-                  {shops.map((s) => (
-                    <tr key={s.id} className="hover:bg-brand-ivory/50">
-                      <td className="py-3 px-3 font-semibold text-brand-charcoal">
-                        {s.name}
-                      </td>
-                      <td className="py-3 px-3 text-brand-charcoal-muted">
-                        {s.location_details}
-                      </td>
-                      <td className="py-3 px-3">
-                        <span
-                          className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${
-                            s.settlement_type === "PREPAID"
-                              ? "bg-amber-100 text-amber-800"
-                              : "bg-blue-100 text-blue-800"
-                          }`}
-                        >
-                          {s.settlement_type}
-                        </span>
-                      </td>
-                      <td className="py-3 px-3 font-mono font-bold">
-                        {s.settlement_type === "PREPAID" ? (
-                          <span className={s.is_low_balance ? "text-rose-600" : "text-brand-forest"}>
-                            ₹{s.prepaid_balance ?? 0}
-                          </span>
-                        ) : (
-                          <span className="text-brand-charcoal-muted">Daily Batch</span>
-                        )}
-                      </td>
-                      <td className="py-3 px-3">
-                        <span
-                          className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${
-                            s.is_open ? "bg-emerald-100 text-emerald-800" : "bg-rose-100 text-rose-800"
-                          }`}
-                        >
-                          {s.is_open ? "OPEN" : "CLOSED"}
-                        </span>
-                      </td>
-                      <td className="py-3 px-3 text-right">
-                        <button
-                          onClick={() => handleToggleShop(s.id)}
-                          className={`px-3 py-1 rounded-xl text-xs font-semibold ${
-                            s.is_open
-                              ? "bg-rose-50 text-rose-700 hover:bg-rose-100"
-                              : "bg-emerald-50 text-emerald-700 hover:bg-emerald-100"
-                          }`}
-                        >
-                          {s.is_open ? "Close Shop" : "Open Shop"}
-                        </button>
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          </div>
-        )}
-
-        {/* TAB 5: MENU MANAGEMENT & AUDITABLE PRICE UPDATES */}
-        {activeTab === "menu" && (
-          <div className="bg-white rounded-3xl p-6 border border-brand-sage shadow-soft space-y-4">
-            <div className="flex items-center justify-between">
-              <div>
-                <h3 className="font-heading font-bold text-base text-brand-charcoal">
-                  Catalog & Price Modification Engine
-                </h3>
-                <p className="text-xs text-brand-charcoal-muted">
-                  Every price update enforces reason recording and immutable audit trail.
-                </p>
-              </div>
-            </div>
-
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
-              {[
-                { id: 1, name: "Desi Chai (Cardamom & Ginger)", shop: "Chaayos", price: 99 },
-                { id: 2, name: "Kulhad Chai", shop: "Chaayos", price: 119 },
-                { id: 3, name: "Classic Bun Maska", shop: "Chaayos", price: 79 },
-                { id: 6, name: "Paneer Tikka Sub (6-Inch)", shop: "Subway", price: 239 },
-                { id: 7, name: "Roasted Chicken Strip Sub", shop: "Subway", price: 269 },
-                { id: 11, name: "Delhi Style Chole Bhature", shop: "Haldiram's", price: 180 },
-                { id: 15, name: "Iced Vietnamese Latte", shop: "Blue Tokai", price: 220 },
-                { id: 19, name: "Braided Type-C Fast Cable (1m)", shop: "Daily Essentials", price: 299 },
-              ].map((item) => (
-                <div
-                  key={item.id}
-                  className="p-3.5 bg-brand-ivory/40 rounded-2xl border border-brand-sage flex items-center justify-between"
-                >
-                  <div>
-                    <div className="font-semibold text-xs text-brand-charcoal">{item.name}</div>
-                    <div className="text-[10px] text-brand-charcoal-muted">{item.shop}</div>
-                    <div className="font-mono font-bold text-brand-forest mt-1">₹{item.price}</div>
-                  </div>
-                  <button
-                    onClick={() => {
-                      setPriceItemId(item.id);
-                      setPriceItemName(item.name);
-                      setNewPrice(item.price);
-                      setIsPriceModalOpen(true);
-                    }}
-                    className="px-3 py-1.5 bg-brand-forest text-brand-ivory text-xs font-semibold rounded-xl hover:bg-brand-forest-dark"
-                  >
-                    Edit Price
-                  </button>
-                </div>
-              ))}
-            </div>
-          </div>
-        )}
-
-        {/* TAB 8: DAILY SETTLEMENTS */}
-        {activeTab === "settlements" && (
-          <div className="bg-white rounded-3xl p-6 border border-brand-sage shadow-soft space-y-4">
-            <div className="flex items-center justify-between">
-              <div>
-                <h3 className="font-heading font-bold text-base text-brand-charcoal">
-                  Daily Settlement Statements
-                </h3>
-                <p className="text-xs text-brand-charcoal-muted">
-                  Aggregates verified daily orders for shops on daily settlement model.
-                </p>
-              </div>
-            </div>
-
-            <div className="overflow-x-auto">
-              <table className="w-full text-xs text-left">
-                <thead>
-                  <tr className="border-b border-brand-sage text-brand-charcoal-muted">
-                    <th className="py-2.5 px-3">Statement Ref</th>
-                    <th className="py-2.5 px-3">Shop</th>
-                    <th className="py-2.5 px-3">Date</th>
-                    <th className="py-2.5 px-3">Total Payable</th>
-                    <th className="py-2.5 px-3">Status</th>
-                    <th className="py-2.5 px-3">Bank UTR Reference</th>
-                    <th className="py-2.5 px-3 text-right">Finance Action</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-brand-sage/40">
-                  {settlements.map((st) => (
-                    <tr key={st.id} className="hover:bg-brand-ivory/50">
-                      <td className="py-3 px-3 font-mono font-bold text-brand-forest">
-                        {st.settlement_reference}
-                      </td>
-                      <td className="py-3 px-3 font-semibold">{st.shop_name}</td>
-                      <td className="py-3 px-3 font-mono">{st.settlement_date}</td>
-                      <td className="py-3 px-3 font-mono font-bold">₹{st.total_payable}</td>
-                      <td className="py-3 px-3">
-                        <span
-                          className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${
-                            st.status === "PAID"
-                              ? "bg-emerald-100 text-emerald-800"
-                              : "bg-amber-100 text-amber-800"
-                          }`}
-                        >
-                          {st.status}
-                        </span>
-                      </td>
-                      <td className="py-3 px-3 font-mono text-brand-charcoal-muted">
-                        {st.payout_utr_ref || "—"}
-                      </td>
-                      <td className="py-3 px-3 text-right">
-                        {st.status !== "PAID" && (
-                          <button
-                            onClick={() => {
-                              setSettleId(st.id);
-                              setIsSettleModalOpen(true);
-                            }}
-                            className="px-3 py-1 bg-brand-forest text-brand-ivory rounded-xl text-xs font-semibold"
-                          >
-                            Verify & Pay
-                          </button>
-                        )}
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          </div>
-        )}
-
-        {/* TAB 9: PREPAID BALANCES & IMMUTABLE LEDGER */}
-        {activeTab === "prepaid" && (
-          <div className="space-y-6">
+          {/* TAB: SHOPS */}
+          {activeTab === "shops" && (
             <div className="bg-white rounded-3xl p-6 border border-brand-sage shadow-soft space-y-4">
               <div className="flex items-center justify-between">
                 <div>
                   <h3 className="font-heading font-bold text-base text-brand-charcoal">
-                    Prepaid Shop Balances
+                    Concourse Shop Partners
                   </h3>
                   <p className="text-xs text-brand-charcoal-muted">
-                    Advance balance model: new orders stop when balance is depleted.
+                    Open/close toggles, lead times, and settlement models.
                   </p>
                 </div>
-                <button
-                  onClick={() => setIsTopupModalOpen(true)}
-                  className="px-3.5 py-2 bg-brand-forest text-brand-ivory text-xs font-semibold rounded-xl shadow-xs flex items-center gap-1.5"
-                >
-                  <Plus className="w-3.5 h-3.5" />
-                  <span>Record Advance Top-Up</span>
-                </button>
               </div>
 
-              <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                {prepaidAccounts.map((acc) => (
-                  <div
-                    key={acc.shop_id}
-                    className="p-4 bg-brand-ivory/40 rounded-2xl border border-brand-sage space-y-2"
-                  >
-                    <div className="flex justify-between items-start">
-                      <span className="font-heading font-bold text-xs text-brand-charcoal">
-                        {acc.shop_name}
-                      </span>
-                      {acc.is_low_balance_alerted && (
-                        <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-rose-100 text-rose-800">
-                          LOW BALANCE
-                        </span>
-                      )}
-                    </div>
-
-                    <div className="text-xl font-mono font-extrabold text-brand-forest">
-                      ₹{acc.current_balance}
-                    </div>
-
-                    <div className="text-[10px] text-brand-charcoal-muted flex justify-between">
-                      <span>Threshold: ₹{acc.min_threshold_alert}</span>
-                      <button
-                        onClick={() => handleViewLedger(acc.shop_id)}
-                        className="text-brand-forest font-semibold underline"
-                      >
-                        View Immutable Ledger
-                      </button>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            </div>
-
-            {/* Selected Shop Ledger Entries */}
-            {selectedShopForLedger && (
-              <div className="bg-white rounded-3xl p-6 border border-brand-sage shadow-soft space-y-3">
-                <div className="flex justify-between items-center">
-                  <h4 className="font-heading font-bold text-sm text-brand-charcoal">
-                    Immutable Ledger Stream for Shop #{selectedShopForLedger}
-                  </h4>
-                  <button
-                    onClick={() => setSelectedShopForLedger(null)}
-                    className="text-xs text-brand-charcoal-muted underline"
-                  >
-                    Close Ledger
-                  </button>
-                </div>
-
-                <div className="overflow-x-auto">
-                  <table className="w-full text-xs text-left">
-                    <thead>
-                      <tr className="border-b border-brand-sage text-brand-charcoal-muted">
-                        <th className="py-2 px-3">Type</th>
-                        <th className="py-2 px-3">Amount</th>
-                        <th className="py-2 px-3">Balance After</th>
-                        <th className="py-2 px-3">Reference</th>
-                        <th className="py-2 px-3">Notes</th>
-                      </tr>
-                    </thead>
-                    <tbody className="divide-y divide-brand-sage/40">
-                      {shopLedgerEntries.map((e) => (
-                        <tr key={e.id}>
-                          <td className="py-2.5 px-3">
-                            <span
-                              className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${
-                                e.transaction_type === "CREDIT_TOPUP"
-                                  ? "bg-emerald-100 text-emerald-800"
-                                  : e.transaction_type === "REVERSAL_REFUND"
-                                  ? "bg-blue-100 text-blue-800"
-                                  : "bg-rose-100 text-rose-800"
-                              }`}
-                            >
-                              {e.transaction_type}
-                            </span>
-                          </td>
-                          <td className="py-2.5 px-3 font-mono font-bold">₹{e.amount}</td>
-                          <td className="py-2.5 px-3 font-mono">₹{e.balance_after}</td>
-                          <td className="py-2.5 px-3 font-mono text-brand-forest">{e.reference_id}</td>
-                          <td className="py-2.5 px-3 text-brand-charcoal-muted">{e.notes}</td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-              </div>
-            )}
-          </div>
-        )}
-
-        {/* TAB 11: SECURITY & AUDIT LOGS */}
-        {activeTab === "audit" && (
-          <div className="bg-white rounded-3xl p-6 border border-brand-sage shadow-soft space-y-4">
-            <h3 className="font-heading font-bold text-base text-brand-charcoal">
-              Immutable System & Operational Audit Logs
-            </h3>
-            <div className="overflow-x-auto">
-              <table className="w-full text-xs text-left">
-                <thead>
-                  <tr className="border-b border-brand-sage text-brand-charcoal-muted">
-                    <th className="py-2 px-3">Role</th>
-                    <th className="py-2 px-3">Action</th>
-                    <th className="py-2 px-3">Target Entity</th>
-                    <th className="py-2 px-3">Details</th>
-                    <th className="py-2 px-3">Timestamp</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-brand-sage/40">
-                  {auditLogs.map((log) => (
-                    <tr key={log.id} className="hover:bg-brand-ivory/50">
-                      <td className="py-2.5 px-3 font-semibold text-brand-forest">{log.role}</td>
-                      <td className="py-2.5 px-3 font-mono font-bold text-xs">{log.action}</td>
-                      <td className="py-2.5 px-3 text-brand-charcoal-muted">{log.target_entity}</td>
-                      <td className="py-2.5 px-3 text-brand-charcoal">{log.details}</td>
-                      <td className="py-2.5 px-3 font-mono text-[10px] text-brand-charcoal-muted">
-                        {new Date(log.created_at).toLocaleTimeString()}
-                      </td>
+              <div className="overflow-x-auto">
+                <table className="w-full text-xs text-left">
+                  <thead>
+                    <tr className="border-b border-brand-sage text-brand-charcoal-muted">
+                      <th className="py-2.5 px-3">Shop</th>
+                      <th className="py-2.5 px-3">Location in Megapolis</th>
+                      <th className="py-2.5 px-3">Settlement Model</th>
+                      <th className="py-2.5 px-3">Prepaid Balance</th>
+                      <th className="py-2.5 px-3">Operating State</th>
+                      <th className="py-2.5 px-3 text-right">Toggle State</th>
                     </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          </div>
-        )}
-
-        {/* TAB 10: REFUNDS ARCHIVE */}
-        {activeTab === "refunds" && (
-          <div className="bg-white rounded-3xl p-6 border border-brand-sage shadow-soft space-y-4">
-            <h3 className="font-heading font-bold text-base text-brand-charcoal">
-              Refunds Log (2-Min Cancellations & Partial Rejections)
-            </h3>
-            <div className="overflow-x-auto">
-              <table className="w-full text-xs text-left">
-                <thead>
-                  <tr className="border-b border-brand-sage text-brand-charcoal-muted">
-                    <th className="py-2 px-3">Order Number</th>
-                    <th className="py-2 px-3">Amount</th>
-                    <th className="py-2 px-3">Reason</th>
-                    <th className="py-2 px-3">Status</th>
-                    <th className="py-2 px-3">Gateway ID</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-brand-sage/40">
-                  {refunds.length === 0 ? (
-                    <tr>
-                      <td colSpan={5} className="py-4 text-center text-brand-charcoal-muted">
-                        No refunds issued yet.
-                      </td>
-                    </tr>
-                  ) : (
-                    refunds.map((r) => (
-                      <tr key={r.id}>
-                        <td className="py-2.5 px-3 font-mono font-bold text-brand-forest">
-                          {r.order_number || `#${r.master_order_id}`}
+                  </thead>
+                  <tbody className="divide-y divide-brand-sage/40">
+                    {shops.map((s) => (
+                      <tr key={s.id} className="hover:bg-brand-ivory/50">
+                        <td className="py-3 px-3 font-semibold text-brand-charcoal">
+                          {s.name}
                         </td>
-                        <td className="py-2.5 px-3 font-mono font-bold text-rose-600">₹{r.amount}</td>
-                        <td className="py-2.5 px-3">{r.reason}</td>
-                        <td className="py-2.5 px-3">
-                          <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-100 text-emerald-800">
-                            {r.status}
+                        <td className="py-3 px-3 text-brand-charcoal-muted">
+                          {s.location_details}
+                        </td>
+                        <td className="py-3 px-3 font-semibold">
+                          {s.settlement_type}
+                        </td>
+                        <td className="py-3 px-3 font-mono font-bold">
+                          ₹{s.prepaid_balance ?? 0}
+                        </td>
+                        <td className="py-3 px-3">
+                          <span
+                            className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${
+                              s.is_open ? "bg-emerald-100 text-emerald-800" : "bg-rose-100 text-rose-800"
+                            }`}
+                          >
+                            {s.is_open ? "OPEN" : "CLOSED"}
                           </span>
                         </td>
-                        <td className="py-2.5 px-3 font-mono text-[10px] text-brand-charcoal-muted">
-                          {r.gateway_refund_id}
+                        <td className="py-3 px-3 text-right">
+                          <button
+                            onClick={() => handleToggleShop(s.id)}
+                            className={`px-3 py-1 rounded-xl text-xs font-semibold ${
+                              s.is_open
+                                ? "bg-rose-50 text-rose-700 hover:bg-rose-100"
+                                : "bg-emerald-50 text-emerald-700 hover:bg-emerald-100"
+                            }`}
+                          >
+                            {s.is_open ? "Close Shop" : "Open Shop"}
+                          </button>
                         </td>
                       </tr>
-                    ))
-                  )}
-                </tbody>
-              </table>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
             </div>
-          </div>
-        )}
+          )}
 
-        {/* TAB 6: FLEET RUNNERS */}
-        {activeTab === "runners" && (
-          <div className="bg-white rounded-3xl p-6 border border-brand-sage shadow-soft space-y-4">
-            <h3 className="font-heading font-bold text-base text-brand-charcoal">
-              AtDesk Dedicated Runners (JMD Megapolis)
-            </h3>
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              {runners.map((run) => (
-                <div
-                  key={run.id}
-                  className="p-4 bg-brand-ivory/50 rounded-2xl border border-brand-sage flex items-center justify-between"
-                >
-                  <div className="flex items-center gap-3">
-                    <div className="w-10 h-10 rounded-xl bg-brand-forest text-brand-ivory flex items-center justify-center font-bold">
-                      <Bike className="w-5 h-5" />
-                    </div>
-                    <div>
-                      <div className="font-heading font-bold text-sm text-brand-charcoal">
-                        {run.name}
-                      </div>
-                      <div className="text-[11px] text-brand-charcoal-muted font-mono">
-                        Vehicle: {run.vehicle_number} • Phone: {run.phone}
-                      </div>
-                      <div className="text-[10px] text-brand-forest font-semibold mt-0.5">
-                        GPS: Sector 48 Plaza (28.4162, 77.0425)
-                      </div>
-                    </div>
-                  </div>
-                  <span className="px-2.5 py-1 rounded-full text-[10px] font-bold bg-emerald-100 text-emerald-800">
-                    ACTIVE
-                  </span>
+          {/* TAB: SETTLEMENTS */}
+          {activeTab === "settlements" && (
+            <div className="bg-white rounded-3xl p-6 border border-brand-sage shadow-soft space-y-4">
+              <div className="flex items-center justify-between">
+                <div>
+                  <h3 className="font-heading font-bold text-base text-brand-charcoal">
+                    Daily Settlement Statements
+                  </h3>
+                  <p className="text-xs text-brand-charcoal-muted">
+                    Aggregates verified daily orders for shops on daily settlement model.
+                  </p>
                 </div>
-              ))}
-            </div>
-          </div>
-        )}
+              </div>
 
-        {/* TAB 7: EMPLOYEES */}
-        {activeTab === "employees" && (
-          <div className="bg-white rounded-3xl p-6 border border-brand-sage shadow-soft space-y-4">
-            <h3 className="font-heading font-bold text-base text-brand-charcoal">
-              Registered JMD Megapolis Employees
-            </h3>
-            <div className="overflow-x-auto">
-              <table className="w-full text-xs text-left">
-                <thead>
-                  <tr className="border-b border-brand-sage text-brand-charcoal-muted">
-                    <th className="py-2 px-3">Name</th>
-                    <th className="py-2 px-3">Phone</th>
-                    <th className="py-2 px-3">Employer / Company</th>
-                    <th className="py-2 px-3">Tower</th>
-                    <th className="py-2 px-3">Floor</th>
-                    <th className="py-2 px-3">Desk ID</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-brand-sage/40">
-                  {employees.map((emp) => (
-                    <tr key={emp.id}>
-                      <td className="py-2.5 px-3 font-semibold text-brand-charcoal">{emp.name}</td>
-                      <td className="py-2.5 px-3 font-mono">{emp.phone}</td>
-                      <td className="py-2.5 px-3">{emp.company}</td>
-                      <td className="py-2.5 px-3 font-semibold">{emp.tower}</td>
-                      <td className="py-2.5 px-3">Floor {emp.floor}</td>
-                      <td className="py-2.5 px-3 font-mono text-brand-forest">{emp.desk}</td>
+              <div className="overflow-x-auto">
+                <table className="w-full text-xs text-left">
+                  <thead>
+                    <tr className="border-b border-brand-sage text-brand-charcoal-muted">
+                      <th className="py-2.5 px-3">Statement Ref</th>
+                      <th className="py-2.5 px-3">Shop</th>
+                      <th className="py-2.5 px-3">Date</th>
+                      <th className="py-2.5 px-3">Total Payable</th>
+                      <th className="py-2.5 px-3">Status</th>
+                      <th className="py-2.5 px-3">Bank UTR Reference</th>
+                      <th className="py-2.5 px-3 text-right">Finance Action</th>
                     </tr>
-                  ))}
-                </tbody>
-              </table>
+                  </thead>
+                  <tbody className="divide-y divide-brand-sage/40">
+                    {settlements.map((st) => (
+                      <tr key={st.id} className="hover:bg-brand-ivory/50">
+                        <td className="py-3 px-3 font-mono font-semibold text-brand-forest">
+                          {st.settlement_reference}
+                        </td>
+                        <td className="py-3 px-3 font-semibold">{st.shop_name}</td>
+                        <td className="py-3 px-3 font-mono">{st.settlement_date}</td>
+                        <td className="py-3 px-3 font-mono font-bold">₹{st.total_payable}</td>
+                        <td className="py-3 px-3">
+                          <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-brand-sage text-brand-forest">
+                            {st.status}
+                          </span>
+                        </td>
+                        <td className="py-3 px-3 font-mono text-brand-charcoal-muted">
+                          {st.payout_utr_ref || "Pending Transfer"}
+                        </td>
+                        <td className="py-3 px-3 text-right">
+                          {st.status !== "PAID" && (
+                            <button
+                              onClick={() => {
+                                setSettleId(st.id);
+                                setIsSettleModalOpen(true);
+                              }}
+                              className="px-3 py-1 bg-brand-forest text-brand-ivory rounded-xl text-xs font-semibold"
+                            >
+                              Record Payout
+                            </button>
+                          )}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
             </div>
-          </div>
-        )}
+          )}
+
+          {/* TAB: AUDIT LOGS */}
+          {activeTab === "audit" && (
+            <div className="bg-white rounded-3xl p-6 border border-brand-sage shadow-soft space-y-4">
+              <div className="flex items-center justify-between">
+                <div>
+                  <h3 className="font-heading font-bold text-base text-brand-charcoal">
+                    Immutable Compliance Audit Trail
+                  </h3>
+                  <p className="text-xs text-brand-charcoal-muted">
+                    Complete records of orders, payments, supervisor OTP reveals, and menu price modifications.
+                  </p>
+                </div>
+              </div>
+
+              <div className="overflow-x-auto">
+                <table className="w-full text-xs text-left">
+                  <thead>
+                    <tr className="border-b border-brand-sage text-brand-charcoal-muted">
+                      <th className="py-2.5 px-3">Timestamp</th>
+                      <th className="py-2.5 px-3">Role</th>
+                      <th className="py-2.5 px-3">Action</th>
+                      <th className="py-2.5 px-3">Details</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-brand-sage/40">
+                    {auditLogs.map((log) => (
+                      <tr key={log.id} className="hover:bg-brand-ivory/50">
+                        <td className="py-3 px-3 font-mono text-brand-charcoal-muted">
+                          {new Date(log.created_at).toLocaleTimeString()}
+                        </td>
+                        <td className="py-3 px-3 font-bold text-brand-forest">{log.role}</td>
+                        <td className="py-3 px-3 font-semibold text-brand-charcoal">{log.action}</td>
+                        <td className="py-3 px-3 text-brand-charcoal-muted">{log.details}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          )}
+        </div>
       </main>
 
-      {/* PRICE MODAL */}
+      {/* Mobile Bottom Navigation Bar */}
+      <div className="md:hidden fixed bottom-0 inset-x-0 z-40 bg-brand-forest text-brand-ivory border-t border-brand-forest-dark px-2 py-2 flex items-center justify-around text-[10px]">
+        {[
+          { id: "pilot", label: "Command", icon: ShieldAlert },
+          { id: "exceptions", label: "Alerts", icon: AlertTriangle },
+          { id: "all-orders", label: "Orders", icon: ShoppingCart },
+          { id: "catalogue", label: "Menu", icon: UtensilsCrossed },
+          { id: "promos", label: "Promos", icon: Tag },
+        ].map((item) => {
+          const Icon = item.icon;
+          const isActive = activeTab === item.id;
+          return (
+            <button
+              key={item.id}
+              onClick={() => setActiveTab(item.id as AdminTab)}
+              className={`flex flex-col items-center gap-1 py-1 px-2 rounded-xl ${
+                isActive ? "text-brand-tangerine font-bold" : "text-brand-ivory/70"
+              }`}
+            >
+              <Icon className="w-4 h-4" />
+              <span>{item.label}</span>
+            </button>
+          );
+        })}
+      </div>
+
+      {/* Price Update Modal */}
       {isPriceModalOpen && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4">
-          <div className="bg-white rounded-3xl p-6 max-w-sm w-full space-y-4 shadow-2xl">
-            <h3 className="font-heading font-bold text-sm text-brand-charcoal">
-              Modify Price: {priceItemName}
+          <div className="bg-white rounded-3xl max-w-sm w-full p-6 space-y-4 shadow-2xl border border-brand-sage">
+            <h3 className="font-heading font-bold text-base text-brand-charcoal">
+              Edit Price: {priceItemName}
             </h3>
             <div>
-              <label className="text-xs font-semibold text-brand-charcoal-muted block mb-1">
-                New Price (₹)
-              </label>
+              <label className="block text-xs text-brand-charcoal-muted mb-1">New Price (₹)</label>
               <input
                 type="number"
                 value={newPrice}
                 onChange={(e) => setNewPrice(Number(e.target.value))}
-                className="w-full px-3 py-2 border rounded-xl font-mono text-sm"
+                className="w-full px-3 py-2 rounded-xl border border-brand-sage text-sm font-bold"
               />
             </div>
             <div>
-              <label className="text-xs font-semibold text-brand-charcoal-muted block mb-1">
-                Mandatory Audit Reason
-              </label>
-              <textarea
+              <label className="block text-xs text-brand-charcoal-muted mb-1">Audit Reason</label>
+              <input
+                type="text"
                 value={priceReason}
                 onChange={(e) => setPriceReason(e.target.value)}
-                placeholder="e.g. Vendor raw material cost revised"
-                rows={2}
-                className="w-full px-3 py-2 border rounded-xl text-xs"
+                placeholder="Reason for change"
+                className="w-full px-3 py-2 rounded-xl border border-brand-sage text-xs"
               />
             </div>
             <div className="flex gap-2">
               <button
                 onClick={() => setIsPriceModalOpen(false)}
-                className="flex-1 py-2 rounded-xl border text-xs"
+                className="flex-1 py-2 bg-brand-ivory text-brand-charcoal text-xs font-bold rounded-xl"
               >
                 Cancel
               </button>
               <button
-                onClick={handlePriceUpdate}
-                className="flex-1 py-2 bg-brand-forest text-brand-ivory rounded-xl text-xs font-bold"
+                onClick={handleUpdatePrice}
+                className="flex-1 py-2 bg-brand-forest text-brand-ivory text-xs font-bold rounded-xl"
               >
-                Save & Audit
+                Save
               </button>
             </div>
           </div>
         </div>
       )}
 
-      {/* PREPAID TOPUP MODAL */}
-      {isTopupModalOpen && (
+      {/* Bulk CSV Modal */}
+      {isBulkCsvModalOpen && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4">
-          <div className="bg-white rounded-3xl p-6 max-w-sm w-full space-y-4 shadow-2xl">
-            <h3 className="font-heading font-bold text-sm text-brand-charcoal">
-              Record Advance Prepaid Deposit
-            </h3>
-            <div>
-              <label className="text-xs font-semibold text-brand-charcoal-muted block mb-1">
-                Target Shop
-              </label>
-              <select
-                value={topupShopId}
-                onChange={(e) => setTopupShopId(Number(e.target.value))}
-                className="w-full px-3 py-2 border rounded-xl text-xs"
-              >
-                {shops.filter((s) => s.settlement_type === "PREPAID").map((s) => (
-                  <option key={s.id} value={s.id}>
-                    {s.name}
-                  </option>
-                ))}
-              </select>
+          <div className="bg-white rounded-3xl max-w-lg w-full p-6 space-y-4 shadow-2xl border border-brand-sage">
+            <div className="flex items-center justify-between">
+              <h3 className="font-heading font-bold text-base text-brand-charcoal flex items-center gap-2">
+                <Upload className="w-5 h-5 text-brand-forest" />
+                <span>Bulk Import Menu Items (CSV)</span>
+              </h3>
+              <button onClick={() => setIsBulkCsvModalOpen(false)} className="text-brand-charcoal-muted hover:text-black">
+                <X className="w-5 h-5" />
+              </button>
             </div>
-            <div>
-              <label className="text-xs font-semibold text-brand-charcoal-muted block mb-1">
-                Deposit Amount (₹)
-              </label>
-              <input
-                type="number"
-                value={topupAmount}
-                onChange={(e) => setTopupAmount(Number(e.target.value))}
-                className="w-full px-3 py-2 border rounded-xl font-mono text-sm"
-              />
-            </div>
-            <div>
-              <label className="text-xs font-semibold text-brand-charcoal-muted block mb-1">
-                Bank / UPI Transaction Reference
-              </label>
-              <input
-                type="text"
-                value={topupUtr}
-                onChange={(e) => setTopupUtr(e.target.value)}
-                className="w-full px-3 py-2 border rounded-xl font-mono text-xs"
-              />
-            </div>
-            <div className="flex gap-2">
+            <p className="text-xs text-brand-charcoal-muted">
+              CSV Header Format: <code>shop_id,name,description,price,dietary,prep_time_mins,is_food</code>
+            </p>
+            <textarea
+              value={csvText}
+              onChange={(e) => setCsvText(e.target.value)}
+              placeholder="1,Kadak Masala Chai,Cardamom infused tea,80,VEG,8,true"
+              rows={6}
+              className="w-full p-3 text-xs font-mono rounded-xl border border-brand-sage bg-brand-ivory/40 focus:outline-none focus:ring-2 focus:ring-brand-forest"
+            />
+            {csvFeedback && (
+              <div className={`text-xs font-bold p-2.5 rounded-xl ${csvFeedback.startsWith("Success") ? "bg-emerald-50 text-emerald-800" : "bg-red-50 text-red-800"}`}>
+                {csvFeedback}
+              </div>
+            )}
+            <div className="flex justify-end gap-2">
               <button
-                onClick={() => setIsTopupModalOpen(false)}
-                className="flex-1 py-2 rounded-xl border text-xs"
+                onClick={() => setIsBulkCsvModalOpen(false)}
+                className="px-4 py-2 bg-brand-ivory text-brand-charcoal text-xs font-bold rounded-xl"
               >
                 Cancel
               </button>
               <button
-                onClick={handlePrepaidTopup}
-                className="flex-1 py-2 bg-brand-forest text-brand-ivory rounded-xl text-xs font-bold"
+                onClick={handleBulkCsv}
+                disabled={!csvText.trim()}
+                className="px-4 py-2 bg-brand-forest hover:bg-brand-forest-dark disabled:opacity-50 text-brand-ivory text-xs font-bold rounded-xl"
               >
-                Record Deposit
+                Import CSV Rows
               </button>
             </div>
           </div>
         </div>
       )}
 
-      {/* SETTLEMENT VERIFY MODAL */}
-      {isSettleModalOpen && (
+      {/* Add Menu Item Modal */}
+      {isNewItemModalOpen && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4">
-          <div className="bg-white rounded-3xl p-6 max-w-sm w-full space-y-4 shadow-2xl">
-            <h3 className="font-heading font-bold text-sm text-brand-charcoal">
-              Verify Daily Payout UTR
-            </h3>
-            <div>
-              <label className="text-xs font-semibold text-brand-charcoal-muted block mb-1">
-                Banking UTR / UPI Reference
-              </label>
-              <input
-                type="text"
-                value={settleUtr}
-                onChange={(e) => setSettleUtr(e.target.value)}
-                placeholder="e.g. UTR-HDFC-998822"
-                className="w-full px-3 py-2 border rounded-xl font-mono text-xs"
-              />
+          <div className="bg-white rounded-3xl max-w-md w-full p-6 space-y-4 shadow-2xl border border-brand-sage">
+            <div className="flex items-center justify-between">
+              <h3 className="font-heading font-bold text-base text-brand-charcoal">
+                Add New Menu Item
+              </h3>
+              <button onClick={() => setIsNewItemModalOpen(false)}>
+                <X className="w-5 h-5" />
+              </button>
             </div>
-            <div className="flex gap-2">
+            <div className="space-y-3 text-xs">
+              <div>
+                <label className="block text-brand-charcoal-muted mb-1 font-semibold">Select Shop</label>
+                <select
+                  value={itemForm.shop_id}
+                  onChange={(e) => setItemForm({ ...itemForm, shop_id: Number(e.target.value) })}
+                  className="w-full p-2.5 rounded-xl border border-brand-sage"
+                >
+                  {shops.map((s) => (
+                    <option key={s.id} value={s.id}>{s.name}</option>
+                  ))}
+                </select>
+              </div>
+              <div>
+                <label className="block text-brand-charcoal-muted mb-1 font-semibold">Item Name</label>
+                <input
+                  type="text"
+                  value={itemForm.name}
+                  onChange={(e) => setItemForm({ ...itemForm, name: e.target.value })}
+                  placeholder="e.g. Masala Chai"
+                  className="w-full p-2.5 rounded-xl border border-brand-sage"
+                />
+              </div>
+              <div className="grid grid-cols-2 gap-2">
+                <div>
+                  <label className="block text-brand-charcoal-muted mb-1 font-semibold">Price (₹)</label>
+                  <input
+                    type="number"
+                    value={itemForm.price}
+                    onChange={(e) => setItemForm({ ...itemForm, price: Number(e.target.value) })}
+                    className="w-full p-2.5 rounded-xl border border-brand-sage font-bold"
+                  />
+                </div>
+                <div>
+                  <label className="block text-brand-charcoal-muted mb-1 font-semibold">Prep Lead (Mins)</label>
+                  <input
+                    type="number"
+                    value={itemForm.prep_time_mins}
+                    onChange={(e) => setItemForm({ ...itemForm, prep_time_mins: Number(e.target.value) })}
+                    className="w-full p-2.5 rounded-xl border border-brand-sage"
+                  />
+                </div>
+              </div>
+              <div>
+                <label className="block text-brand-charcoal-muted mb-1 font-semibold">Dietary Label</label>
+                <select
+                  value={itemForm.dietary}
+                  onChange={(e) => setItemForm({ ...itemForm, dietary: e.target.value })}
+                  className="w-full p-2.5 rounded-xl border border-brand-sage"
+                >
+                  <option value="VEG">VEG</option>
+                  <option value="NON_VEG">NON_VEG</option>
+                  <option value="EGG">EGG</option>
+                  <option value="NONE">NONE</option>
+                </select>
+              </div>
+            </div>
+            <div className="flex gap-2 pt-2">
               <button
-                onClick={() => setIsSettleModalOpen(false)}
-                className="flex-1 py-2 rounded-xl border text-xs"
+                onClick={() => setIsNewItemModalOpen(false)}
+                className="flex-1 py-2 bg-brand-ivory text-brand-charcoal text-xs font-bold rounded-xl"
               >
                 Cancel
               </button>
               <button
-                onClick={handleVerifySettle}
-                className="flex-1 py-2 bg-brand-forest text-brand-ivory rounded-xl text-xs font-bold"
+                onClick={handleCreateMenuItem}
+                disabled={!itemForm.name.trim()}
+                className="flex-1 py-2 bg-brand-forest hover:bg-brand-forest-dark text-brand-ivory text-xs font-bold rounded-xl"
               >
-                Verify & Mark Paid
+                Save Item
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Add Coupon Modal */}
+      {isCouponModalOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4">
+          <div className="bg-white rounded-3xl max-w-sm w-full p-6 space-y-4 shadow-2xl border border-brand-sage">
+            <h3 className="font-heading font-bold text-base text-brand-charcoal">
+              Create Promo Coupon
+            </h3>
+            <div className="space-y-3 text-xs">
+              <div>
+                <label className="block text-brand-charcoal-muted mb-1 font-semibold">Coupon Code</label>
+                <input
+                  type="text"
+                  value={couponForm.code}
+                  onChange={(e) => setCouponForm({ ...couponForm, code: e.target.value.toUpperCase() })}
+                  placeholder="e.g. MEGAPOLIS30"
+                  className="w-full p-2.5 rounded-xl border border-brand-sage font-mono uppercase font-bold"
+                />
+              </div>
+              <div className="grid grid-cols-2 gap-2">
+                <div>
+                  <label className="block text-brand-charcoal-muted mb-1 font-semibold">Discount Type</label>
+                  <select
+                    value={couponForm.discount_type}
+                    onChange={(e) => setCouponForm({ ...couponForm, discount_type: e.target.value })}
+                    className="w-full p-2.5 rounded-xl border border-brand-sage"
+                  >
+                    <option value="FLAT">FLAT (₹)</option>
+                    <option value="PERCENTAGE">PERCENT (%)</option>
+                  </select>
+                </div>
+                <div>
+                  <label className="block text-brand-charcoal-muted mb-1 font-semibold">Value</label>
+                  <input
+                    type="number"
+                    value={couponForm.discount_value}
+                    onChange={(e) => setCouponForm({ ...couponForm, discount_value: Number(e.target.value) })}
+                    className="w-full p-2.5 rounded-xl border border-brand-sage font-bold"
+                  />
+                </div>
+              </div>
+              <div>
+                <label className="block text-brand-charcoal-muted mb-1 font-semibold">Min Order Amount (₹)</label>
+                <input
+                  type="number"
+                  value={couponForm.min_order_amount}
+                  onChange={(e) => setCouponForm({ ...couponForm, min_order_amount: Number(e.target.value) })}
+                  className="w-full p-2.5 rounded-xl border border-brand-sage"
+                />
+              </div>
+            </div>
+            <div className="flex gap-2 pt-2">
+              <button
+                onClick={() => setIsCouponModalOpen(false)}
+                className="flex-1 py-2 bg-brand-ivory text-brand-charcoal text-xs font-bold rounded-xl"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleCreateCoupon}
+                disabled={!couponForm.code.trim()}
+                className="flex-1 py-2 bg-brand-forest hover:bg-brand-forest-dark text-brand-ivory text-xs font-bold rounded-xl"
+              >
+                Create
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Add Banner Modal */}
+      {isBannerModalOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4">
+          <div className="bg-white rounded-3xl max-w-sm w-full p-6 space-y-4 shadow-2xl border border-brand-sage">
+            <h3 className="font-heading font-bold text-base text-brand-charcoal">
+              Add Promotional Banner
+            </h3>
+            <div className="space-y-3 text-xs">
+              <div>
+                <label className="block text-brand-charcoal-muted mb-1 font-semibold">Title</label>
+                <input
+                  type="text"
+                  value={bannerForm.title}
+                  onChange={(e) => setBannerForm({ ...bannerForm, title: e.target.value })}
+                  placeholder="e.g. Afternoon Chai Break"
+                  className="w-full p-2.5 rounded-xl border border-brand-sage font-semibold"
+                />
+              </div>
+              <div>
+                <label className="block text-brand-charcoal-muted mb-1 font-semibold">Subtitle</label>
+                <input
+                  type="text"
+                  value={bannerForm.subtitle}
+                  onChange={(e) => setBannerForm({ ...bannerForm, subtitle: e.target.value })}
+                  placeholder="e.g. Freshly brewed to desk in 15 mins"
+                  className="w-full p-2.5 rounded-xl border border-brand-sage"
+                />
+              </div>
+              <div>
+                <label className="block text-brand-charcoal-muted mb-1 font-semibold">Image URL</label>
+                <input
+                  type="text"
+                  value={bannerForm.image_url}
+                  onChange={(e) => setBannerForm({ ...bannerForm, image_url: e.target.value })}
+                  placeholder="https://..."
+                  className="w-full p-2.5 rounded-xl border border-brand-sage"
+                />
+              </div>
+            </div>
+            <div className="flex gap-2 pt-2">
+              <button
+                onClick={() => setIsBannerModalOpen(false)}
+                className="flex-1 py-2 bg-brand-ivory text-brand-charcoal text-xs font-bold rounded-xl"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleCreateBanner}
+                disabled={!bannerForm.title.trim()}
+                className="flex-1 py-2 bg-brand-forest hover:bg-brand-forest-dark text-brand-ivory text-xs font-bold rounded-xl"
+              >
+                Publish Banner
               </button>
             </div>
           </div>
@@ -1110,4 +1279,3 @@ export function AdminDashboard() {
     </div>
   );
 }
-

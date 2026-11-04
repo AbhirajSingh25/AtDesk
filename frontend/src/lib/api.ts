@@ -1,14 +1,33 @@
 const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000/api";
 
+export function getAuthToken(): string | null {
+  if (typeof window === "undefined") return null;
+  return localStorage.getItem("atdesk_token");
+}
+
+export function setAuthToken(token: string | null) {
+  if (typeof window === "undefined") return;
+  if (token) {
+    localStorage.setItem("atdesk_token", token);
+  } else {
+    localStorage.removeItem("atdesk_token");
+  }
+}
+
 export async function fetchApi<T>(endpoint: string, options?: RequestInit): Promise<T> {
   const url = `${API_BASE_URL}${endpoint.startsWith("/") ? endpoint : `/${endpoint}`}`;
+  const token = getAuthToken();
+
+  const headers: Record<string, string> = {
+    "Content-Type": "application/json",
+    ...(token ? { Authorization: `Bearer ${token}` } : {}),
+    ...((options?.headers as Record<string, string>) || {}),
+  };
+
   try {
     const res = await fetch(url, {
       ...options,
-      headers: {
-        "Content-Type": "application/json",
-        ...(options?.headers || {}),
-      },
+      headers,
     });
 
     if (!res.ok) {

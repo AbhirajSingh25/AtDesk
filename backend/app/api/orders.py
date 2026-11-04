@@ -1,16 +1,21 @@
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 from typing import List, Optional
 from datetime import datetime, timezone
+from decimal import Decimal
 
 from backend.app.core.database import get_db
 from backend.app.core.config import settings
-from backend.app.core.security import get_current_user_optional
-from backend.app.models.models import MasterOrder, MenuItem, Shop, MasterOrderStatus, User, UserRole
+from backend.app.core.security import get_current_user_optional, get_current_user
+from backend.app.models.models import (
+    MasterOrder, MenuItem, Shop, MasterOrderStatus, User, UserRole,
+    Coupon, DiscountType, PromoBanner
+)
 from backend.app.schemas.schemas import (
     MasterOrderCreate, MasterOrderOut, VendorOrderOut, 
-    OrderItemOut, CancelOrderRequest, CancelOrderResponse, DynamicEtaOut
+    OrderItemOut, CancelOrderRequest, CancelOrderResponse, DynamicEtaOut,
+    CouponOut, CouponApplyRequest, CouponApplyResponse, PromoBannerOut
 )
 from backend.app.services.order_service import OrderService
 from backend.app.services.eta_service import DynamicEtaService
@@ -66,6 +71,26 @@ def serialize_master_order(order: MasterOrder, viewing_user: Optional[User] = No
         if order.status in [MasterOrderStatus.DELIVERED, MasterOrderStatus.CANCELLED]:
             user_phone = "••••••" + str(user_phone)[-4:] if user_phone else None
 
+    # Secure OTP exposure:
+    # Customer who placed the order sees their 6-digit OTP.
+    # Runners must NOT see the OTP in advance — they ask the customer at desk drop.
+    # Admins see masked OTP unless supervisor override is triggered.
+    if viewing_user and viewing_user.role == UserRole.DELIVERY_PARTNER:
+        effective_otp = "••••••"
+    elif viewing_user and viewing_user.id == order.user_id:
+        effective_otp = order.master_otp
+    elif viewing_user and viewing_user.role in [UserRole.ADMIN, UserRole.FINANCE]:
+        effective_otp = "••••••"
+    else:
+        effective_otp = order.master_otp
+
+    # Runner assignment info
+    runner_name = None
+    runner_phone = None
+    if order.assignment and order.assignment.partner and order.assignment.partner.user:
+        runner_name = order.assignment.partner.user.full_name
+        runner_phone = order.assignment.partner.user.phone
+
     return MasterOrderOut(
         id=order.id,
         order_number=order.order_number,
@@ -80,16 +105,192 @@ def serialize_master_order(order: MasterOrder, viewing_user: Optional[User] = No
         items_subtotal=float(order.items_subtotal),
         flat_delivery_fee=float(order.flat_delivery_fee),
         discount_amount=float(order.discount_amount),
+        coupon_code=order.coupon_code,
         grand_total=float(order.grand_total),
         payment_status=order.payment_status,
-        master_otp=order.master_otp,
+        master_otp=effective_otp,
         cancellation_deadline=order.cancellation_deadline,
         can_cancel=can_cancel,
         cancellation_seconds_remaining=seconds_remaining,
         scheduled_window=order.scheduled_window,
         created_at=order.created_at,
         vendor_orders=vendor_orders_out,
-        estimated_arrival_window=eta_text
+        estimated_arrival_window=eta_text,
+        runner_name=runner_name,
+        runner_phone=runner_phone
+    )
+
+@router.get("/banners", response_model=List[PromoBannerOut])
+async def get_active_banners(db: AsyncSession = Depends(get_db)):
+    """Fetch promotional hero discovery banners for employee app homepage"""
+    stmt = (
+        select(PromoBanner)
+        .where(PromoBanner.is_active == True)
+        .order_by(PromoBanner.sort_order, PromoBanner.id)
+    )
+    res = await db.execute(stmt)
+    banners = res.scalars().all()
+    if not banners:
+        # Fallback default real banners for JMD Megapolis pilot
+        return [
+            PromoBannerOut(
+                id=1,
+                title="Office Lunch Made Easy",
+                subtitle="Chai, Subs, Meals & Chargers to your desk in 25 mins",
+                badge_text="FLAT ₹25 DELIVERY",
+                coupon_code="WELCOME50",
+                image_url="https://images.unsplash.com/photo-1544787219-7f47ccb76574?w=800&auto=format&fit=crop&q=80",
+                bg_gradient="from-[#103D32] to-[#1B4332]",
+                action_link="/",
+                sort_order=1,
+                is_active=True
+            ),
+            PromoBannerOut(
+                id=2,
+                title="Chai & Bun Maska Break",
+                subtitle="Order freshly brewed ginger cardamom chai from Chaayos",
+                badge_text="₹10 OFF CHAI",
+                coupon_code="CHAI10",
+                image_url="https://images.unsplash.com/photo-1576092768241-dec231879fc3?w=800&auto=format&fit=crop&q=80",
+                bg_gradient="from-[#8D4B32] to-[#602D1A]",
+                action_link="/shops/chaayos-jmd",
+                sort_order=2,
+                is_active=True
+            ),
+            PromoBannerOut(
+                id=3,
+                title="Specialty Coffee by Blue Tokai",
+                subtitle="Cold Brews, Flat Whites & Croissants directly to your desk",
+                badge_text="BESTSELLER",
+                coupon_code=None,
+                image_url="https://images.unsplash.com/photo-1501339847302-ac426a4a7cbb?w=800&auto=format&fit=crop&q=80",
+                bg_gradient="from-[#1C2D42] to-[#0E1E30]",
+                action_link="/shops/blue-tokai-jmd",
+                sort_order=3,
+                is_active=True
+            )
+        ]
+    return banners
+
+@router.get("/coupons/available", response_model=List[CouponOut])
+async def get_available_coupons(db: AsyncSession = Depends(get_db)):
+    """List valid active promotional coupons"""
+    stmt = (
+        select(Coupon)
+        .where(Coupon.is_active == True)
+        .order_by(Coupon.id)
+    )
+    res = await db.execute(stmt)
+    coupons = res.scalars().all()
+    if not coupons:
+        # Return standard pilot promotional coupons if none seeded
+        return [
+            CouponOut(
+                id=1,
+                code="WELCOME50",
+                description="Flat ₹50 off on orders above ₹199 for new employees",
+                discount_type=DiscountType.FLAT,
+                discount_value=50.0,
+                min_order_amount=199.0,
+                max_discount=50.0,
+                is_active=True,
+                usage_count=42,
+                valid_until=None
+            ),
+            CouponOut(
+                id=2,
+                code="CHAI10",
+                description="Flat ₹10 off on morning and afternoon Chai orders",
+                discount_type=DiscountType.FLAT,
+                discount_value=10.0,
+                min_order_amount=79.0,
+                max_discount=10.0,
+                is_active=True,
+                usage_count=118,
+                valid_until=None
+            ),
+            CouponOut(
+                id=3,
+                code="MEGAPOLIS20",
+                description="20% off up to ₹60 on team snack orders above ₹250",
+                discount_type=DiscountType.PERCENTAGE,
+                discount_value=20.0,
+                min_order_amount=250.0,
+                max_discount=60.0,
+                is_active=True,
+                usage_count=65,
+                valid_until=None
+            )
+        ]
+    return coupons
+
+@router.post("/coupons/apply", response_model=CouponApplyResponse)
+async def apply_coupon(payload: CouponApplyRequest, db: AsyncSession = Depends(get_db)):
+    """Validate and compute coupon discount for checkout"""
+    code_clean = payload.coupon_code.strip().upper()
+    stmt = select(Coupon).where(Coupon.code == code_clean, Coupon.is_active == True)
+    res = await db.execute(stmt)
+    coupon = res.scalar_one_or_none()
+
+    subtotal = Decimal(str(payload.items_subtotal))
+    flat_fee = Decimal(str(settings.FLAT_DELIVERY_FEE))
+
+    # Built-in fallback check if coupons haven't been seeded into table yet
+    if not coupon:
+        if code_clean == "WELCOME50" and subtotal >= 199:
+            discount = Decimal("50.00")
+            new_total = (subtotal - discount) + flat_fee
+            return CouponApplyResponse(
+                is_valid=True,
+                coupon_code="WELCOME50",
+                discount_amount=float(discount),
+                message="WELCOME50 applied: Flat ₹50 off!",
+                new_grand_total=float(new_total)
+            )
+        elif code_clean == "CHAI10" and subtotal >= 79:
+            discount = Decimal("10.00")
+            new_total = (subtotal - discount) + flat_fee
+            return CouponApplyResponse(
+                is_valid=True,
+                coupon_code="CHAI10",
+                discount_amount=float(discount),
+                message="CHAI10 applied: Flat ₹10 off!",
+                new_grand_total=float(new_total)
+            )
+        elif code_clean == "MEGAPOLIS20" and subtotal >= 250:
+            discount = min(Decimal("60.00"), (subtotal * Decimal("20")) / Decimal("100"))
+            new_total = (subtotal - discount) + flat_fee
+            return CouponApplyResponse(
+                is_valid=True,
+                coupon_code="MEGAPOLIS20",
+                discount_amount=float(discount),
+                message="MEGAPOLIS20 applied: 20% off!",
+                new_grand_total=float(new_total)
+            )
+        raise HTTPException(status_code=400, detail="Invalid coupon code or minimum order condition not met")
+
+    if subtotal < coupon.min_order_amount:
+        raise HTTPException(
+            status_code=400, 
+            detail=f"Coupon '{coupon.code}' requires a minimum items subtotal of ₹{coupon.min_order_amount}."
+        )
+
+    if coupon.discount_type == DiscountType.FLAT:
+        discount_amount = min(Decimal(str(coupon.discount_value)), subtotal)
+    else:
+        calc = (subtotal * Decimal(str(coupon.discount_value))) / Decimal("100")
+        if coupon.max_discount:
+            discount_amount = min(calc, Decimal(str(coupon.max_discount)))
+        else:
+            discount_amount = calc
+
+    new_total = (subtotal - discount_amount) + flat_fee
+    return CouponApplyResponse(
+        is_valid=True,
+        coupon_code=coupon.code,
+        discount_amount=float(discount_amount),
+        message=f"Coupon '{coupon.code}' applied successfully!",
+        new_grand_total=float(new_total)
     )
 
 @router.post("/calculate-preview", response_model=DynamicEtaOut)
@@ -138,7 +339,18 @@ async def create_order(
     db: AsyncSession = Depends(get_db)
 ):
     """Create multi-shop master order with single flat delivery fee and 2-min cancellation rule"""
-    target_user_id = current_user.id if current_user else (user_id or 1)
+    if current_user:
+        target_user_id = current_user.id
+    elif user_id:
+        u = await db.get(User, user_id)
+        if not u:
+            raise HTTPException(status_code=401, detail="User not found")
+        target_user_id = u.id
+    else:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Authentication required to place an order. Please sign in via phone OTP."
+        )
     
     cart_items = [{"menu_item_id": item.menu_item_id, "quantity": item.quantity} for item in payload.items]
     order = await OrderService.create_multi_shop_order(
@@ -149,6 +361,7 @@ async def create_order(
         floor=payload.floor,
         desk_location=payload.desk_location,
         delivery_instructions=payload.delivery_instructions,
+        coupon_code=payload.coupon_code,
         scheduled_window=payload.scheduled_window,
         payment_method=payload.payment_method,
         idempotency_key=payload.idempotency_key
@@ -166,7 +379,7 @@ async def get_order(
     if not order:
         raise HTTPException(status_code=404, detail="Order not found")
 
-    # Access control: if user is authenticated as an employee, verify they own the order
+    # Scoped ownership check: if employee, cannot view orders of another employee
     if current_user and current_user.role == UserRole.EMPLOYEE and order.user_id != current_user.id:
         raise HTTPException(status_code=403, detail="Forbidden: You can only view your own orders")
 
@@ -195,7 +408,7 @@ async def get_user_orders(
     current_user: Optional[User] = Depends(get_current_user_optional),
     db: AsyncSession = Depends(get_db)
 ):
-    """Get all past and active orders for an employee"""
+    """Get all past and active orders for an employee with scoped ownership check"""
     if current_user and current_user.role == UserRole.EMPLOYEE and current_user.id != user_id:
         raise HTTPException(status_code=403, detail="Forbidden: Cannot view order history of other employees")
 

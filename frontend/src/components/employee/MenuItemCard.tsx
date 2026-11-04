@@ -148,7 +148,11 @@ export function MenuItemCard({ item, shop }: MenuItemCardProps) {
 
           {/* Quantity Stepper */}
           <div className="mt-2 w-full">
-            {quantity === 0 ? (
+            {!item.is_available ? (
+              <div className="w-full py-1.5 bg-red-50 text-red-600 font-bold text-[10px] rounded-xl border border-red-200 text-center">
+                Sold Out
+              </div>
+            ) : quantity === 0 ? (
               <button
                 onClick={() => addItem(item, shop)}
                 className="w-full py-1.5 bg-brand-ivory hover:bg-brand-sage-light text-brand-forest font-heading font-bold text-xs rounded-xl border border-brand-forest/20 shadow-sm flex items-center justify-center gap-1 transition-all active:scale-95"

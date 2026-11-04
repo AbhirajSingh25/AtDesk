@@ -1,4 +1,24 @@
-export type UserRole = "EMPLOYEE" | "DELIVERY_PARTNER" | "ADMIN" | "FINANCE";
+export type UserRole = "EMPLOYEE" | "DELIVERY_PARTNER" | "SHOP_STAFF" | "ADMIN" | "FINANCE";
+
+export interface PromoBanner {
+  id: number;
+  title: string;
+  subtitle?: string;
+  image_url: string;
+  deeplink?: string;
+  badge_text?: string;
+  is_active: boolean;
+}
+
+export interface Coupon {
+  id: number;
+  code: string;
+  discount_type: "FLAT" | "PERCENTAGE";
+  discount_value: number;
+  min_order_amount: number;
+  max_discount?: number;
+  is_active: boolean;
+}
 
 export type MasterOrderStatus =
   | "CREATED"
@@ -101,6 +121,7 @@ export interface MasterOrder {
   items_subtotal: number;
   flat_delivery_fee: number;
   discount_amount: number;
+  coupon_code?: string;
   grand_total: number;
   payment_status: string;
   master_otp: string;
@@ -108,6 +129,8 @@ export interface MasterOrder {
   can_cancel: boolean;
   cancellation_seconds_remaining: number;
   scheduled_window?: string;
+  runner_name?: string;
+  runner_phone?: string;
   created_at: string;
   vendor_orders: VendorOrder[];
   estimated_arrival_window?: string;
