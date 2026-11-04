@@ -2,7 +2,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 from sqlalchemy.orm import selectinload
-from typing import List
+from typing import List, Dict, Any
 from backend.app.core.database import get_db
 from backend.app.models.models import Shop, MenuCategory, MenuItem
 from backend.app.schemas.schemas import ShopOut, ShopDetailOut, MenuCategoryOut, MenuItemOut
@@ -15,6 +15,42 @@ async def list_shops(db: AsyncSession = Depends(get_db)):
     stmt = select(Shop).order_by(Shop.id)
     res = await db.execute(stmt)
     return res.scalars().all()
+
+@router.get("/bestsellers")
+async def get_bestselling_items(db: AsyncSession = Depends(get_db)):
+    """
+    Get top popular items across verified shops at JMD Megapolis for homepage discovery.
+    Includes item photo, dietary tag, price, and shop metadata.
+    """
+    stmt = (
+        select(MenuItem)
+        .options(selectinload(MenuItem.shop))
+        .where(MenuItem.is_available == True)
+        .order_by(MenuItem.id)
+        .limit(10)
+    )
+    res = await db.execute(stmt)
+    items = res.scalars().all()
+    
+    out = []
+    for it in items:
+        out.append({
+            "id": it.id,
+            "name": it.name,
+            "description": it.description,
+            "price": float(it.price),
+            "portion_size": it.portion_size,
+            "image_url": it.image_url,
+            "dietary": it.dietary,
+            "is_food": it.is_food,
+            "prep_time_mins": it.prep_time_mins,
+            "shop_id": it.shop_id,
+            "shop_name": it.shop.name if it.shop else "JMD Partner",
+            "shop_slug": it.shop.slug if it.shop else "",
+            "shop_open": it.shop.is_open if it.shop else True,
+            "eta_mins": (it.shop.prep_lead_time_mins + 15) if it.shop else 25
+        })
+    return out
 
 @router.get("/{shop_id_or_slug}", response_model=ShopDetailOut)
 async def get_shop_details(shop_id_or_slug: str, db: AsyncSession = Depends(get_db)):
@@ -43,7 +79,7 @@ async def get_shop_details(shop_id_or_slug: str, db: AsyncSession = Depends(get_
 
     # Build response
     categories_out = []
-    for cat in shop.categories:
+    for cat in sorted(shop.categories, key=lambda c: c.sort_order):
         cat_items = [
             MenuItemOut.model_validate(it) for it in cat.items if it.is_available
         ]
@@ -73,4 +109,3 @@ async def get_shop_details(shop_id_or_slug: str, db: AsyncSession = Depends(get_
         items=all_items,
         current_prepaid_balance=prepaid_bal
     )
-

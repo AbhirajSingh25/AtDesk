@@ -13,6 +13,7 @@ def utcnow():
 class UserRole(str, enum.Enum):
     EMPLOYEE = "EMPLOYEE"
     DELIVERY_PARTNER = "DELIVERY_PARTNER"
+    SHOP_STAFF = "SHOP_STAFF"
     ADMIN = "ADMIN"
     FINANCE = "FINANCE"
 
@@ -76,8 +77,9 @@ class User(Base):
     is_active = Column(Boolean, default=True)
     created_at = Column(DateTime(timezone=True), default=utcnow)
 
-    employee_profile = relationship("EmployeeProfile", back_populates="user", uselist=False)
-    delivery_profile = relationship("DeliveryPartner", back_populates="user", uselist=False)
+    employee_profile = relationship("EmployeeProfile", back_populates="user", uselist=False, lazy="selectin")
+    delivery_profile = relationship("DeliveryPartner", back_populates="user", uselist=False, lazy="selectin")
+    shop_staff_profile = relationship("ShopStaffProfile", back_populates="user", uselist=False, lazy="selectin")
     master_orders = relationship("MasterOrder", back_populates="user")
     notifications = relationship("Notification", back_populates="user")
 
@@ -112,6 +114,19 @@ class DeliveryPartner(Base):
     user = relationship("User", back_populates="delivery_profile")
     assignments = relationship("DeliveryAssignment", back_populates="partner")
 
+# 3b. Shop Staff Profile
+class ShopStaffProfile(Base):
+    __tablename__ = "shop_staff_profiles"
+
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), unique=True, nullable=False)
+    shop_id = Column(Integer, ForeignKey("shops.id", ondelete="CASCADE"), nullable=False)
+    role_title = Column(String(50), default="Counter Staff")  # Manager, Line Cook, Counter Staff
+    created_at = Column(DateTime(timezone=True), default=utcnow)
+
+    user = relationship("User", back_populates="shop_staff_profile")
+    shop = relationship("Shop", back_populates="staff_profiles")
+
 # 4. Shops
 class Shop(Base):
     __tablename__ = "shops"
@@ -144,6 +159,7 @@ class Shop(Base):
     vendor_orders = relationship("VendorOrder", back_populates="shop")
     settlements = relationship("ShopSettlement", back_populates="shop")
     menu_versions = relationship("MenuVersion", back_populates="shop")
+    staff_profiles = relationship("ShopStaffProfile", back_populates="shop")
 
 # 5. Shop Operating Hours
 class ShopOperatingHour(Base):
@@ -236,6 +252,7 @@ class MasterOrder(Base):
     items_subtotal = Column(Numeric(10, 2), nullable=False)
     flat_delivery_fee = Column(Numeric(10, 2), default=25.00, nullable=False)
     discount_amount = Column(Numeric(10, 2), default=0.00, nullable=False)
+    coupon_code = Column(String(50), nullable=True)
     grand_total = Column(Numeric(10, 2), nullable=False)
     
     # Payment & Fraud Security
@@ -544,3 +561,43 @@ class OrderUnitEconomics(Base):
     created_at = Column(DateTime(timezone=True), default=utcnow)
 
     master_order = relationship("MasterOrder", back_populates="unit_economics")
+
+# 31. Discount Type Enum
+class DiscountType(str, enum.Enum):
+    PERCENTAGE = "PERCENTAGE"
+    FLAT = "FLAT"
+
+# 32. Promotional Coupons
+class Coupon(Base):
+    __tablename__ = "coupons"
+
+    id = Column(Integer, primary_key=True, index=True)
+    code = Column(String(50), unique=True, index=True, nullable=False)
+    description = Column(String(255), nullable=True)
+    discount_type = Column(Enum(DiscountType), default=DiscountType.FLAT, nullable=False)
+    discount_value = Column(Numeric(10, 2), nullable=False)
+    min_order_amount = Column(Numeric(10, 2), default=0.00, nullable=False)
+    max_discount = Column(Numeric(10, 2), nullable=True)
+    is_active = Column(Boolean, default=True)
+    valid_from = Column(DateTime(timezone=True), default=utcnow)
+    valid_until = Column(DateTime(timezone=True), nullable=True)
+    usage_count = Column(Integer, default=0)
+    max_uses = Column(Integer, nullable=True)
+    created_at = Column(DateTime(timezone=True), default=utcnow)
+
+# 33. Discovery Promotional Banners
+class PromoBanner(Base):
+    __tablename__ = "promo_banners"
+
+    id = Column(Integer, primary_key=True, index=True)
+    title = Column(String(100), nullable=False)
+    subtitle = Column(String(150), nullable=True)
+    badge_text = Column(String(50), nullable=True)  # e.g., "FLAT ₹50 OFF"
+    coupon_code = Column(String(50), nullable=True)
+    image_url = Column(String(255), nullable=True)
+    bg_gradient = Column(String(100), default="from-[#103D32] to-[#1B4332]")
+    action_link = Column(String(255), nullable=True)
+    sort_order = Column(Integer, default=0)
+    is_active = Column(Boolean, default=True)
+    created_at = Column(DateTime(timezone=True), default=utcnow)
+

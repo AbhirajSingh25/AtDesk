@@ -1,6 +1,7 @@
 from datetime import datetime, timezone
 from typing import Dict, Any, List, Optional
 import logging
+import httpx
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 
@@ -34,6 +35,10 @@ class NotificationService:
             logger.info(f"[FCM] Registered device token for User {user_id}")
 
     @classmethod
+    def get_registered_tokens(cls, user_id: int) -> List[str]:
+        return USER_DEVICE_TOKENS.get(user_id, [])
+
+    @classmethod
     async def dispatch_notification(
         cls,
         db: AsyncSession,
@@ -60,24 +65,38 @@ class NotificationService:
         await db.commit()
         await db.refresh(notification)
 
-        # 2. Simulate / Send FCM push payload to registered device tokens
+        # 2. Deliver FCM push payload to registered device tokens
         tokens = USER_DEVICE_TOKENS.get(user_id, [])
-        fcm_payload = {
-            "notification": {
-                "title": title,
-                "body": message,
-                "icon": "/icons/icon-192x192.png",
-                "click_action": "/orders"
-            },
-            "data": {
-                "event_type": event_type,
-                "notification_id": str(notification.id),
-                "timestamp": now.isoformat(),
-                **(metadata or {})
-            }
-        }
         
-        logger.info(f"[FCM Push] Sent '{title}' to User {user_id} across {len(tokens)} device(s). Payload: {fcm_payload['data']}")
+        if tokens and settings.FCM_SERVER_KEY:
+            try:
+                headers = {
+                    "Authorization": f"key={settings.FCM_SERVER_KEY}",
+                    "Content-Type": "application/json"
+                }
+                payload = {
+                    "registration_ids": tokens,
+                    "notification": {
+                        "title": title,
+                        "body": message,
+                        "sound": "default"
+                    },
+                    "data": {
+                        "event_type": event_type,
+                        "notification_id": str(notification.id),
+                        "timestamp": now.isoformat(),
+                        **(metadata or {})
+                    },
+                    "priority": "high"
+                }
+                async with httpx.AsyncClient(timeout=5.0) as client:
+                    resp = await client.post("https://fcm.googleapis.com/fcm/send", json=payload, headers=headers)
+                    logger.info(f"[FCM Push Delivery] Status {resp.status_code} for user {user_id}")
+            except Exception as e:
+                logger.warning(f"[FCM Push Warning] Push request exception: {e}")
+        else:
+            logger.info(f"[Notification Persisted] '{title}' for User {user_id} ({len(tokens)} token(s) registered)")
+
         return notification
 
     # Preset Lifecycle Triggers
@@ -98,32 +117,42 @@ class NotificationService:
         return await cls.dispatch_notification(
             db=db,
             user_id=user_id,
-            title="Preparation Underway",
-            message=f"{shops_str} is actively preparing your fresh order #{order_number}.",
+            title="Order in Preparation",
+            message=f"{shops_str} started preparing your order #{order_number}.",
             event_type="PREPARATION_UPDATE",
             metadata={"order_number": order_number}
         )
 
     @classmethod
-    async def notify_runner_approaching(cls, db: AsyncSession, user_id: int, order_number: str, tower: str):
+    async def notify_runner_approaching(cls, db: AsyncSession, user_id: int, order_number: str, tower: str, floor: int):
         return await cls.dispatch_notification(
             db=db,
             user_id=user_id,
-            title="Runner Arriving at Tower",
-            message=f"Your AtDesk runner has arrived at {tower} and is proceeding up to your floor.",
+            title="Runner Arriving",
+            message=f"Your runner is arriving at {tower}, Floor {floor} with order #{order_number}.",
             event_type="RUNNER_APPROACHING",
-            metadata={"order_number": order_number, "tower": tower}
+            metadata={"order_number": order_number, "tower": tower, "floor": str(floor)}
         )
 
     @classmethod
-    async def notify_desk_drop_otp_prompt(cls, db: AsyncSession, user_id: int, order_number: str, desk: str, master_otp: str):
+    async def notify_desk_drop_prompt(cls, db: AsyncSession, user_id: int, order_number: str, master_otp: str, desk_location: str = "your desk"):
         return await cls.dispatch_notification(
             db=db,
             user_id=user_id,
-            title="Runner At Your Desk!",
-            message=f"Your runner is at {desk}! Please share delivery OTP {master_otp} to receive your order.",
+            title="Desk Drop Ready",
+            message=f"Runner is at {desk_location} for order #{order_number}. Provide OTP {master_otp} to receive your order.",
             event_type="DESK_DROP_OTP_PROMPT",
-            metadata={"order_number": order_number, "master_otp": master_otp}
+            metadata={"order_number": order_number, "master_otp": master_otp, "desk_location": desk_location}
+        )
+
+    @classmethod
+    async def notify_desk_drop_otp_prompt(cls, db: AsyncSession, user_id: int, order_number: str, desk_location: str, master_otp: str):
+        return await cls.notify_desk_drop_prompt(
+            db=db,
+            user_id=user_id,
+            order_number=order_number,
+            master_otp=master_otp,
+            desk_location=desk_location
         )
 
     @classmethod
@@ -132,7 +161,7 @@ class NotificationService:
             db=db,
             user_id=user_id,
             title="Refund Processed",
-            message=f"Refund of Rs.{amount:.2f} processed for order #{order_number}. Reason: {reason}.",
+            message=f"Refund of ₹{amount:.2f} processed for order #{order_number}. Reason: {reason}.",
             event_type="REFUND_PROCESSED",
             metadata={"order_number": order_number, "amount": str(amount)}
         )

@@ -1,8 +1,8 @@
 "use client";
 
 import React, { createContext, useContext, useState, useEffect } from "react";
-import { MenuItem, Shop, CartItem, MasterOrder } from "@/types";
-import { fetchApi } from "./api";
+import { MenuItem, Shop, CartItem, MasterOrder, Coupon } from "@/types";
+import { fetchApi, getAuthToken, setAuthToken } from "./api";
 
 interface DeskLocation {
   tower: string;
@@ -22,6 +22,10 @@ interface CartContextType {
   setDeskLocation: React.Dispatch<React.SetStateAction<DeskLocation>>;
   itemsSubtotal: number;
   flatDeliveryFee: number;
+  discountAmount: number;
+  appliedCoupon: Coupon | null;
+  applyCoupon: (code: string) => Promise<{ success: boolean; discount_amount: number; message: string }>;
+  removeCoupon: () => void;
   grandTotal: number;
   itemsGroupedByShop: { shop: Shop; items: CartItem[]; subtotal: number }[];
   activeOrder: MasterOrder | null;
@@ -30,6 +34,8 @@ interface CartContextType {
   cancelActiveOrder: (reason?: string) => Promise<{ success: boolean; message: string }>;
   isSubmittingOrder: boolean;
   submitOrder: (paymentMethod?: string, scheduledWindow?: string) => Promise<MasterOrder>;
+  customerUser: { id: number; phone: string; full_name: string } | null;
+  setCustomerUser: (user: { id: number; phone: string; full_name: string } | null) => void;
 }
 
 const CartContext = createContext<CartContextType | undefined>(undefined);
@@ -38,6 +44,13 @@ export function CartProvider({ children }: { children: React.ReactNode }) {
   const [items, setItems] = useState<CartItem[]>([]);
   const [activeOrder, setActiveOrder] = useState<MasterOrder | null>(null);
   const [isSubmittingOrder, setIsSubmittingOrder] = useState(false);
+  const [appliedCoupon, setAppliedCoupon] = useState<Coupon | null>(null);
+  const [discountAmount, setDiscountAmount] = useState<number>(0);
+  const [customerUser, setCustomerUser] = useState<{ id: number; phone: string; full_name: string } | null>({
+    id: 1,
+    phone: "+919876543210",
+    full_name: "Aarav Sharma",
+  });
 
   // Default JMD Megapolis Desk location
   const [deskLocation, setDeskLocation] = useState<DeskLocation>({
@@ -80,7 +93,11 @@ export function CartProvider({ children }: { children: React.ReactNode }) {
     setItems((prev) => prev.filter((i) => i.menuItem.id !== menuItemId));
   };
 
-  const clearCart = () => setItems([]);
+  const clearCart = () => {
+    setItems([]);
+    setAppliedCoupon(null);
+    setDiscountAmount(0);
+  };
 
   // Calculate items grouped by shop
   const shopMap = new Map<number, { shop: Shop; items: CartItem[]; subtotal: number }>();
@@ -104,7 +121,47 @@ export function CartProvider({ children }: { children: React.ReactNode }) {
   });
 
   const itemsGroupedByShop = Array.from(shopMap.values());
-  const grandTotal = itemsSubtotal + flatDeliveryFee;
+  const grandTotal = Math.max(0, itemsSubtotal - discountAmount) + flatDeliveryFee;
+
+  const applyCoupon = async (code: string) => {
+    try {
+      const res = await fetchApi<{
+        valid: boolean;
+        discount_amount: number;
+        code: string;
+        discount_type: "FLAT" | "PERCENTAGE";
+        discount_value: number;
+        min_order_amount: number;
+      }>("/orders/coupons/apply", {
+        method: "POST",
+        body: JSON.stringify({
+          coupon_code: code,
+          subtotal: itemsSubtotal,
+        }),
+      });
+
+      if (res.valid) {
+        setAppliedCoupon({
+          id: 0,
+          code: res.code,
+          discount_type: res.discount_type,
+          discount_value: res.discount_value,
+          min_order_amount: res.min_order_amount,
+          is_active: true,
+        });
+        setDiscountAmount(res.discount_amount);
+        return { success: true, discount_amount: res.discount_amount, message: `Coupon ${res.code} applied! Saved ₹${res.discount_amount}` };
+      }
+      return { success: false, discount_amount: 0, message: "Invalid coupon" };
+    } catch (e: any) {
+      return { success: false, discount_amount: 0, message: e.message || "Failed to apply coupon" };
+    }
+  };
+
+  const removeCoupon = () => {
+    setAppliedCoupon(null);
+    setDiscountAmount(0);
+  };
 
   const submitOrder = async (paymentMethod = "UPI", scheduledWindow?: string): Promise<MasterOrder> => {
     setIsSubmittingOrder(true);
@@ -116,11 +173,13 @@ export function CartProvider({ children }: { children: React.ReactNode }) {
         desk_location: deskLocation.desk,
         delivery_instructions: deskLocation.instructions,
         payment_method: paymentMethod,
+        coupon_code: appliedCoupon ? appliedCoupon.code : null,
         scheduled_window: scheduledWindow || null,
         idempotency_key: `IDEMP-${Date.now()}-${Math.random().toString(36).substring(7)}`,
       };
 
-      const order = await fetchApi<MasterOrder>("/orders?user_id=1", {
+      const userParam = customerUser?.id ? `?user_id=${customerUser.id}` : "";
+      const order = await fetchApi<MasterOrder>(`/orders${userParam}`, {
         method: "POST",
         body: JSON.stringify(payload),
       });
@@ -145,8 +204,9 @@ export function CartProvider({ children }: { children: React.ReactNode }) {
 
   const cancelActiveOrder = async (reason = "Customer cancelled within 2 minutes") => {
     if (!activeOrder) throw new Error("No active order to cancel");
+    const userParam = customerUser?.id ? `?user_id=${customerUser.id}` : "?user_id=1";
     const res = await fetchApi<{ success: boolean; message: string; refund_amount: number }>(
-      `/orders/${activeOrder.id}/cancel?user_id=1`,
+      `/orders/${activeOrder.id}/cancel${userParam}`,
       {
         method: "POST",
         body: JSON.stringify({ reason }),
@@ -168,6 +228,10 @@ export function CartProvider({ children }: { children: React.ReactNode }) {
         setDeskLocation,
         itemsSubtotal,
         flatDeliveryFee,
+        discountAmount,
+        appliedCoupon,
+        applyCoupon,
+        removeCoupon,
         grandTotal,
         itemsGroupedByShop,
         activeOrder,
@@ -176,6 +240,8 @@ export function CartProvider({ children }: { children: React.ReactNode }) {
         cancelActiveOrder,
         isSubmittingOrder,
         submitOrder,
+        customerUser,
+        setCustomerUser,
       }}
     >
       {children}

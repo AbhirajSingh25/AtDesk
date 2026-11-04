@@ -40,6 +40,9 @@ async def pg_test_session():
 async def test_sms_otp_dlt_lifecycle():
     """STAGE 3: Test Indian DLT SMS OTP generation, cooldown, lockout, and verification"""
     phone = "9876543210"
+    SmsService._otp_store.pop(phone, None)
+    SmsService._request_history.pop(phone, None)
+    SmsService._lockouts.pop(phone, None)
 
     # 1. Generate OTP
     res1 = SmsService.generate_and_send_otp(phone)

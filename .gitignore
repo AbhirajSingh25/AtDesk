@@ -61,8 +61,12 @@ backend/**/__pycache__/
 .coverage
 htmlcov/
 *.log
+pg_log.txt
+
 
 # IDE & OS Files
+test_script.py
+scratch/
 .vscode/
 .idea/
 *.swp

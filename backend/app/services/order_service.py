@@ -12,7 +12,8 @@ from backend.app.models.models import (
     User, MasterOrder, VendorOrder, OrderItem, MenuItem, Shop,
     Payment, Refund, DeliveryAssignment, DeliveryProof, DeliveryOtpRecord,
     MasterOrderStatus, VendorOrderStatus, PaymentStatus, RefundStatus,
-    SettlementType, AuditLog, EtaSnapshot, DeliveryPartner, ScheduledOrder
+    SettlementType, AuditLog, EtaSnapshot, DeliveryPartner, ScheduledOrder,
+    Coupon, DiscountType
 )
 from backend.app.services.eta_service import DynamicEtaService
 from backend.app.services.finance_service import FinanceService
@@ -29,6 +30,7 @@ class OrderService:
         floor: int,
         desk_location: str,
         delivery_instructions: Optional[str] = None,
+        coupon_code: Optional[str] = None,
         scheduled_window: Optional[str] = None,
         payment_method: str = "UPI",
         idempotency_key: Optional[str] = None,
@@ -99,14 +101,34 @@ class OrderService:
                         detail=f"Shop '{shop.name}' is temporarily at order capacity (Prepaid balance requirement: requires ₹{shop_subtotal}, current balance is ₹{account.current_balance})."
                     )
 
-        # 4. Compute Totals
+        # 4. Compute Totals & Coupon Discount
         total_items_subtotal = Decimal("0.00")
         for s_items in shop_items_map.values():
             for mi, qty in s_items:
                 total_items_subtotal += (Decimal(str(mi.price)) * Decimal(qty))
 
         flat_delivery_fee = Decimal(str(settings.FLAT_DELIVERY_FEE))
-        grand_total = total_items_subtotal + flat_delivery_fee
+        discount_amount = Decimal("0.00")
+        applied_coupon_code = None
+
+        if coupon_code:
+            coupon_clean = coupon_code.strip().upper()
+            c_stmt = select(Coupon).where(Coupon.code == coupon_clean, Coupon.is_active == True)
+            c_res = await db.execute(c_stmt)
+            coupon = c_res.scalar_one_or_none()
+            if coupon and total_items_subtotal >= coupon.min_order_amount:
+                if coupon.discount_type == DiscountType.FLAT:
+                    discount_amount = min(Decimal(str(coupon.discount_value)), total_items_subtotal)
+                elif coupon.discount_type == DiscountType.PERCENTAGE:
+                    calc = (total_items_subtotal * Decimal(str(coupon.discount_value))) / Decimal("100")
+                    if coupon.max_discount:
+                        discount_amount = min(calc, Decimal(str(coupon.max_discount)))
+                    else:
+                        discount_amount = calc
+                applied_coupon_code = coupon.code
+                coupon.usage_count = (coupon.usage_count or 0) + 1
+
+        grand_total = max(Decimal("0.00"), (total_items_subtotal - discount_amount)) + flat_delivery_fee
 
         now = datetime.now(timezone.utc)
         cancellation_deadline = now + timedelta(seconds=settings.CANCELLATION_WINDOW_SECONDS)
@@ -124,7 +146,8 @@ class OrderService:
             delivery_instructions=delivery_instructions,
             items_subtotal=total_items_subtotal,
             flat_delivery_fee=flat_delivery_fee,
-            discount_amount=Decimal("0.00"),
+            discount_amount=discount_amount,
+            coupon_code=applied_coupon_code,
             grand_total=grand_total,
             payment_status=PaymentStatus.PAID,
             idempotency_key=idempotency_key,
@@ -221,13 +244,19 @@ class OrderService:
         )
         db.add(eta_snapshot)
 
-        # 10. Assign Delivery Partner (Fleet runner)
-        runner_res = await db.execute(select(DeliveryPartner).where(DeliveryPartner.is_active == True))
-        runner = runner_res.scalars().first()
-        if runner:
+        # 10. Assign Delivery Partner (Fleet runner assignment)
+        runner_stmt = (
+            select(DeliveryPartner)
+            .where(DeliveryPartner.is_active == True)
+            .order_by(DeliveryPartner.id)
+        )
+        runner_res = await db.execute(runner_stmt)
+        selected_runner = runner_res.scalars().first()
+
+        if selected_runner:
             assignment = DeliveryAssignment(
                 master_order_id=master_order.id,
-                delivery_partner_id=runner.id,
+                delivery_partner_id=selected_runner.id,
                 status="ASSIGNED",
                 assigned_at=now
             )
@@ -262,7 +291,7 @@ class OrderService:
                 selectinload(MasterOrder.eta_snapshots),
                 selectinload(MasterOrder.refunds),
                 selectinload(MasterOrder.payments),
-                selectinload(MasterOrder.assignment),
+                selectinload(MasterOrder.assignment).selectinload(DeliveryAssignment.partner).selectinload(DeliveryPartner.user),
                 selectinload(MasterOrder.proofs),
                 selectinload(MasterOrder.unit_economics)
             )
@@ -511,9 +540,22 @@ class OrderService:
                 detail=f"Incomplete pickups: Please confirm pickup from {', '.join(unpicked_shops)} before attempting desk delivery completion."
             )
 
-        # 3. Mandatory Photo Check
-        if not photo_url_or_data or len(photo_url_or_data.strip()) < 20:
-            raise HTTPException(status_code=400, detail="Mandatory desk delivery photograph is missing")
+        # 3. Mandatory Photo & GPS Check - Block simulated, fabricated or absent evidence
+        if not photo_url_or_data:
+            raise HTTPException(
+                status_code=400, 
+                detail="Mandatory desk delivery photograph is missing. Runner must capture a live photo at employee's desk."
+            )
+        if "_DESK_PROOF_EVIDENCE_" in photo_url_or_data or len(photo_url_or_data.strip()) < 20:
+            raise HTTPException(
+                status_code=400, 
+                detail="Direct camera evidence required: Photo must be captured with live device camera. Fabricated or simulated proofs are strictly prohibited."
+            )
+        if latitude is None or longitude is None or (latitude == 0.0 and longitude == 0.0):
+            raise HTTPException(
+                status_code=400,
+                detail="Real device GPS coordinates required: Proof submission blocked without verified device location permissions."
+            )
 
         # 4. Mandatory OTP Verification
         otp_clean = entered_otp.strip()

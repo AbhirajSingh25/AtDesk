@@ -26,6 +26,10 @@ export function MultiShopCartDrawer({
     itemsGroupedByShop,
     itemsSubtotal,
     flatDeliveryFee,
+    discountAmount,
+    appliedCoupon,
+    applyCoupon,
+    removeCoupon,
     grandTotal,
     deskLocation,
     updateQuantity,
@@ -36,6 +40,26 @@ export function MultiShopCartDrawer({
   const [selectedSlot, setSelectedSlot] = useState("13:00 - 13:30 (Lunch Peak)");
   const [etaPreview, setEtaPreview] = useState<string>("25 - 35 mins");
   const [isLoadingEta, setIsLoadingEta] = useState(false);
+  const [couponInput, setCouponInput] = useState("");
+  const [couponFeedback, setCouponFeedback] = useState<string | null>(null);
+  const [isApplyingCoupon, setIsApplyingCoupon] = useState(false);
+
+  const handleApplyCoupon = async () => {
+    if (!couponInput.trim()) return;
+    setIsApplyingCoupon(true);
+    setCouponFeedback(null);
+    try {
+      const res = await applyCoupon(couponInput.trim());
+      if (res.success) {
+        setCouponFeedback(`Success: ${res.message}`);
+        setCouponInput("");
+      } else {
+        setCouponFeedback(res.message);
+      }
+    } finally {
+      setIsApplyingCoupon(false);
+    }
+  };
 
   // Fetch dynamic ETA preview when items or desk change
   useEffect(() => {
@@ -277,6 +301,62 @@ export function MultiShopCartDrawer({
               ))}
             </div>
 
+            {/* Coupon Code Section */}
+            <div className="bg-white rounded-2xl p-3.5 border border-brand-sage/80 shadow-soft space-y-2">
+              <div className="flex items-center justify-between text-xs font-heading font-bold text-brand-charcoal">
+                <span className="flex items-center gap-1.5">
+                  <Sparkles className="w-3.5 h-3.5 text-brand-tangerine" />
+                  Apply Campus Coupon
+                </span>
+                {appliedCoupon && (
+                  <button
+                    onClick={removeCoupon}
+                    className="text-[11px] text-red-600 font-semibold hover:underline"
+                  >
+                    Remove
+                  </button>
+                )}
+              </div>
+
+              {appliedCoupon ? (
+                <div className="bg-emerald-50 border border-emerald-200 text-emerald-800 p-2.5 rounded-xl text-xs flex items-center justify-between">
+                  <div className="flex items-center gap-2">
+                    <span className="font-mono font-bold bg-emerald-100 px-2 py-0.5 rounded">
+                      {appliedCoupon.code}
+                    </span>
+                    <span>Applied successfully!</span>
+                  </div>
+                  <span className="font-mono font-bold text-emerald-700">
+                    -₹{discountAmount}
+                  </span>
+                </div>
+              ) : (
+                <div className="space-y-2">
+                  <div className="flex gap-2">
+                    <input
+                      type="text"
+                      value={couponInput}
+                      onChange={(e) => setCouponInput(e.target.value.toUpperCase())}
+                      placeholder="Enter promo code (e.g. WELCOME20)"
+                      className="flex-1 px-3 py-2 text-xs font-mono rounded-xl border border-brand-sage bg-brand-ivory/50 focus:outline-none focus:ring-2 focus:ring-brand-forest/20 uppercase"
+                    />
+                    <button
+                      onClick={handleApplyCoupon}
+                      disabled={!couponInput.trim() || isApplyingCoupon}
+                      className="px-4 py-2 bg-brand-forest hover:bg-brand-forest-dark text-brand-ivory text-xs font-bold rounded-xl transition-all disabled:opacity-50"
+                    >
+                      {isApplyingCoupon ? "..." : "Apply"}
+                    </button>
+                  </div>
+                  {couponFeedback && (
+                    <div className={`text-[11px] font-medium ${couponFeedback.startsWith("Success") ? "text-emerald-700" : "text-red-600"}`}>
+                      {couponFeedback}
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
+
             {/* Bill Summary */}
             <div className="bg-white rounded-2xl p-4 border border-brand-sage/80 shadow-soft space-y-2">
               <div className="font-heading font-bold text-xs text-brand-charcoal mb-1">
@@ -289,6 +369,13 @@ export function MultiShopCartDrawer({
                   ₹{itemsSubtotal}
                 </span>
               </div>
+
+              {discountAmount > 0 && (
+                <div className="flex justify-between text-xs text-emerald-700 font-medium">
+                  <span>Coupon Discount ({appliedCoupon?.code})</span>
+                  <span className="font-mono">-₹{discountAmount}</span>
+                </div>
+              )}
 
               <div className="flex justify-between text-xs items-center">
                 <div className="flex items-center gap-1.5">

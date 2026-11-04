@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, HTTPException, Request, Header
+from fastapi import APIRouter, Depends, HTTPException, Request, Header, status
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 from datetime import datetime, timezone, timedelta
@@ -232,42 +232,60 @@ async def initiate_gateway_refund_endpoint(
         "status": refund.status.value
     }
 
+@router.post("/razorpay/webhook")
 @router.post("/webhook")
 async def razorpay_webhook(
     request: Request,
-    x_razorpay_signature: str = Header(None),
+    x_razorpay_signature: Optional[str] = Header(None, alias="X-Razorpay-Signature"),
     db: AsyncSession = Depends(get_db)
 ):
     """
     Cryptographically verified Razorpay Webhook endpoint.
-    Validates HMAC SHA-256 signature and applies idempotent payment state changes.
+    Enforces:
+    1. Mandatory X-Razorpay-Signature validation using HMAC SHA-256 and RAZORPAY_WEBHOOK_SECRET.
+    2. Currency (INR) and payment amount verification against database records.
+    3. Idempotent processing of order.paid and payment.captured events.
+    4. Authoritative start of 2-minute cancellation grace window.
     """
+    if not x_razorpay_signature:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Missing required X-Razorpay-Signature header"
+        )
+
     body_bytes = await request.body()
-    
-    if x_razorpay_signature:
-        is_valid = RazorpayGatewayService.verify_webhook_signature(body_bytes, x_razorpay_signature)
-        if not is_valid:
-            raise HTTPException(status_code=400, detail="Invalid Razorpay webhook cryptographic signature")
+    is_valid = RazorpayGatewayService.verify_webhook_signature(body_bytes, x_razorpay_signature)
+    if not is_valid:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Invalid Razorpay webhook cryptographic signature"
+        )
 
     try:
         payload = json.loads(body_bytes.decode("utf-8"))
     except Exception:
-        raise HTTPException(status_code=400, detail="Invalid JSON payload")
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid JSON payload")
 
     event_type = payload.get("event", "payment.captured")
     payment_entity = payload.get("payload", {}).get("payment", {}).get("entity", {})
-    gateway_payment_id = payment_entity.get("id", "pay_mock_webhook")
+    gateway_payment_id = payment_entity.get("id")
     gateway_order_id = payment_entity.get("order_id")
 
-    # Idempotency check: check if this event has already been processed
-    existing_event = await db.execute(
-        select(PaymentEvent).where(
-            PaymentEvent.event_type == event_type,
-            PaymentEvent.payload.like(f"%{gateway_payment_id}%")
+    # Verify Currency is INR
+    currency = payment_entity.get("currency")
+    if currency and currency.upper() != "INR":
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"Unsupported currency: {currency}")
+
+    # Idempotency check: check if this event has already been recorded
+    if gateway_payment_id:
+        existing_event = await db.execute(
+            select(PaymentEvent).where(
+                PaymentEvent.event_type == event_type,
+                PaymentEvent.payload.like(f"%{gateway_payment_id}%")
+            )
         )
-    )
-    if existing_event.scalar_one_or_none():
-        return {"status": "ok", "message": "Duplicate event ignored (idempotent)"}
+        if existing_event.scalar_one_or_none():
+            return {"status": "ok", "message": "Duplicate event ignored (idempotent)"}
 
     # Find payment record
     stmt = select(Payment).where(Payment.gateway_order_id == gateway_order_id)
@@ -275,8 +293,17 @@ async def razorpay_webhook(
     payment = res.scalar_one_or_none()
 
     if payment:
+        # Validate amount if provided in payload (paise to INR)
+        payload_amount_paise = payment_entity.get("amount")
+        if payload_amount_paise is not None:
+            payload_amount_inr = Decimal(str(payload_amount_paise / 100.0))
+            if abs(payment.amount - payload_amount_inr) > Decimal("0.05"):
+                logger.error(f"[Webhook Security] Amount mismatch: DB={payment.amount}, Payload={payload_amount_inr}")
+                raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Payment amount mismatch detected")
+
         payment.status = PaymentStatus.PAID
-        payment.gateway_payment_id = gateway_payment_id
+        if gateway_payment_id:
+            payment.gateway_payment_id = gateway_payment_id
 
         event = PaymentEvent(
             payment_id=payment.id,
@@ -297,4 +324,4 @@ async def razorpay_webhook(
 
         await db.commit()
 
-    return {"status": "ok", "event": event_type}
+    return {"status": "ok", "event": event_type, "message": "Webhook processed successfully"}

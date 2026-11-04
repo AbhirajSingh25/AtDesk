@@ -2,7 +2,6 @@ import type { Metadata } from "next";
 import { Plus_Jakarta_Sans, Inter } from "next/font/google";
 import "./globals.css";
 import { CartProvider } from "@/lib/cart-context";
-import { RoleSwitcher } from "@/components/RoleSwitcher";
 
 const plusJakartaSans = Plus_Jakarta_Sans({
   subsets: ["latin"],
@@ -43,7 +42,6 @@ export default function RootLayout({
     <html lang="en" className={`${plusJakartaSans.variable} ${inter.variable}`}>
       <body className="font-sans antialiased bg-brand-ivory min-h-screen">
         <CartProvider>
-          <RoleSwitcher />
           {children}
         </CartProvider>
       </body>
