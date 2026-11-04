@@ -46,7 +46,11 @@ interface PilotMetrics {
   };
 }
 
-export function PilotDashboardView() {
+interface PilotDashboardViewProps {
+  onSwitchTab?: (tab: string) => void;
+}
+
+export function PilotDashboardView({ onSwitchTab }: PilotDashboardViewProps = {}) {
   const [mode, setMode] = useState<string>("PILOT_LIVE");
   const [metrics, setMetrics] = useState<PilotMetrics | null>(null);
   const [shops, setShops] = useState<any[]>([]);

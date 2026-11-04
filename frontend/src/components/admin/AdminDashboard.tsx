@@ -14,7 +14,7 @@ import {
   Search, Filter, ArrowUpRight, Plus, ExternalLink, 
   ChevronRight, Building2, Check, Clock, Eye, EyeOff,
   Upload, FileText, Tag, Image, Trash2, Edit3, X, Sparkles,
-  AlertTriangle
+  AlertTriangle, ShieldCheck
 } from "lucide-react";
 
 import { PilotDashboardView } from "./PilotDashboardView";
